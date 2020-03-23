@@ -1,6 +1,6 @@
 # Get-O365MailboxPermissions
 
-The script queries your O365 environment for a given set of cloud mailboxes and attempts to pull their `SendOnBehalf`, `FullAccess`, and `SendAs` permissions.  Your organization must assign your account the appropriate permissions to run the following Exchange Online PowerShell and Active Directory cmdlets:
+The script queries your O365 environment for a given set of cloud mailboxes and attempts to pull their `SendOnBehalf`, `FullAccess`, and `SendAs` permissions.  Your organization must assign your account the appropriate roles/permissions to run the following Exchange Online PowerShell and Active Directory cmdlets:
 
 * `Get-Mailbox`
 * `Get-MailboxPermissions`
