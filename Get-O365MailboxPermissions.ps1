@@ -1,13 +1,14 @@
 ﻿<#
 .SYNOPSIS
-    
-.DESCRIPTION
-    This scripts looks for O365 mailboxes based on the sites name and then returns mailboxes of interest depending on the SendOnBehalf, FullAccess, and SendAs permissions.
+    Looks for O365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest. 
 
-    SendOnBehalf
-    Checks all mailboxes that have user accounts listed under this property.  If there are multiple it displays each account and queries that distinguished name (DN) and universal principal name (UPN) for that account.  In instances where an account has a non-unique name this query will return multiple values and display all of them.  It is up to the user to further determine which one(s) are accurate.
+.DESCRIPTION
+    To run this script your organization must assigned the appropriate O365 permissions/roles to execute the Get-Mailbox, Get-MailboxPermissions, Get-RecipientPermission, and Get-ADUser Exchange Online PowerShell and Active Directory cmdlets.
+
+    SendOnBehalf:
+    Checks all mailboxes that have user accounts listed under this property.  If there are multiple it displays each account and queries the distinguished name (DN) and universal principal name (UPN) for that account.  In instances where an account has a non-unique name this query will return multiple values and display all of them.  It is up to the analyst to further determine which one(s) are accurate.
     
-    FullAccess
+    FullAccess:
     Looks for any non-inherited, approved (i.e., not denied) account that has full access permissions to the given mailbox that is not named 'SELF'.  Because inherited permissions are ignored this excludes the following:
         NT AUTHORITY\SYSTEM 
         NT AUTHORITY\NETWORK SERVICE 
@@ -19,27 +20,37 @@
         Exchange Trusted Subsystem
         Managed Availability Servers
         Public Folder Management
+    It also pulls the full distinguised name (DN) for each account as a reference, primarily to identify accounts outside of the local organizational unit (OU).  In some instances the mailbox owner is returned as a result with having full access permissions to their own mailbox.  If this occurs the script does not include that result to provide for easier analysis.
 
-    SendAs
-
+    SendAs:
+    Gets SendAs allowed permissions on a mailbox that is not the owner (i.e., SELF).  Sometimes the permissions owner (i.e., the trustee) is the same as the mailbox owner and in these instances those results are removed.  If the permissions owner is an unresolved/orphaned SID the attempt to query its DN are bypassed.  If an Active Directory user look-up is attempted on other objects and failed this is noted in the OrganizationUnit field.
 
 .PARAMETER Location
+    The location or organizational unit for the mailboxes of interest.
     
 .PARAMETER CsvFileName
+    An optional file name can be specified for the generated CSV output (default name: MailboxPermissions.csv)
 
 .PARAMETER OutputTerminal
+    Display the results to the PowerShell terminal instead of writing them to a CSV file.  This output is a custom object so alternatively it can be pipled to other PowerShell commands.
     
 .EXAMPLE
-.\Get-O365MailboxPermissions.ps1 -Location Denver
+    .\Get-O365MailboxPermissions.ps1 -Location Beijing
+
+    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'MailboxPermissions.csv' in the current working directory location.
     
 .EXAMPLE
-.\Get-O365MailboxPermissions.ps1 -Location Denver -CsvFileName DenverMailboxPermissions.csv
+    .\Get-O365MailboxPermissions.ps1 -Location Beijing -CsvFileName BeijingMailboxPermissions.csv
+
+    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'BeijingMailboxPermissions.csv' in the current working directory location.
 
 .EXAMPLE
-.\Get-O365MailboxPermissions.ps1 -Location Denver -OutputTerminal
+    .\Get-O365MailboxPermissions.ps1 -Location Beijing -OutputTerminal
+
+    Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 
 .NOTES
-    Version 0.2 - Last Modified 23 MAR 2020
+    Version 0.3 - Last Modified 23 MAR 2020
     Author: Sam Pursglove
 #>
 
@@ -131,6 +142,7 @@ function Add-MailboxPermissionObject {
 }
 
 
+# Returns any SendOnBehalfPermissions for the given mailbox
 function Get-SendOnBehalfPermissions {
     param (
         [Parameter(Mandatory)]
@@ -217,6 +229,7 @@ function Get-FullAccessPermissions {
     }
 }
 
+
 # Get the SendAs permissions for the given mailbox
 function Get-SendAsPermissions {
     param (
@@ -270,24 +283,23 @@ $mailboxPermissions = New-Object System.Collections.ArrayList  # global array to
 $globalCatalogServer= Get-ADDomainController -Discover -Service GlobalCatalog # GC server for AD object lookups outside domain of interest
 $filterString       = "OrganizationalUnit -like '*$($Location)*' -and IsMailboxEnabled -eq 'True'" # filter to find mailboxes of interest
 
-Write-Progress -Activity "Get-O365MailboxPermissions" -Status "Searching for $($Location) Mailboxes: Please Wait"
-$mailboxes = Get-Mailbox -Filter $filterString -ResultSize Unlimited
 
-Write-Host "$($mailboxes.Length) Mailboxes Discovered" -ForegroundColor Cyan
+Write-Progress -Activity "Get-O365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
+$mailboxes = Get-Mailbox -Filter $filterString -ResultSize Unlimited
 
 # main script loop
 foreach($mailbox in $mailboxes) {
 
     $percentComplete = [int](($counter/$mailboxes.Length)*100)
-    $currentStatus   = "Getting Permissions for $($mailbox.DisplayName)"
+    $currentStatus   = "Getting Permissions for $($mailbox.DisplayName) ($($counter) of $($mailboxes.Length))"
     
-    Write-Progress -Activity "Get-O365MailboxPermissions" -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendOnBehalfTo Permission"
+    Write-Progress -Activity "Get-O365MailboxPermissions" -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendOnBehalf Permission"
     Get-SendOnBehalfPermissions $mailbox
     
-    Write-Progress -Activity "Get-O365MailboxPermissions" -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "FullAccess Permissions"
+    Write-Progress -Activity "Get-O365MailboxPermissions" -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "FullAccess Permission"
     Get-FullAccessPermissions $mailbox
     
-    Write-Progress -Activity "Get-O365MailboxPermissions" -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendAs Permissions"
+    Write-Progress -Activity "Get-O365MailboxPermissions" -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendAs Permission"
     Get-SendAsPermissions $mailbox
 
     $counter++
