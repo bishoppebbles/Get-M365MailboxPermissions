@@ -58,7 +58,7 @@
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 
 .NOTES
-    Version 0.3 - Last Modified 23 MAR 2020
+    Version 0.4 - Last Modified 27 MAR 2020
     Author: Sam Pursglove
 
 
@@ -229,7 +229,14 @@ function Get-SendOnBehalfPermissions {
             # if an object was located get its Universal Principal Name and Distinguised Name
             if($userInfo -ne $null) {
                 $userDN  = Get-DistinguishedName $userInfo
-                $userUPN = Get-UserPrincipalName $userInfo
+
+                # a group will not have a UPN so use the name instead
+                if ($userInfo.ObjectClass -notlike 'group') {
+                    $userUPN = Get-UserPrincipalName $userInfo
+                } else {
+                    $userUPN = "$owner"
+                }
+
             } else {
                 $userDN  = "Cannot locate the object's User Principal Name (UPN) and Distinguised Name (DN)"
                 $userUPN = "$owner"
