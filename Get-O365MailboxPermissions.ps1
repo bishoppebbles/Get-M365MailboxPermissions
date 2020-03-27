@@ -216,10 +216,14 @@ function Get-SendOnBehalfPermissions {
     
         # obtain the distinguisted name and user principal name for each SendOnBehalf owner
         foreach($owner in $owners) {
-            if (($userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName) -eq $null) {
+            try {
+                if (($userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName) -eq $null) {
                 
-                # if an object is not located in the local domain query the Global Catalog (GC)
-                $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Server "$($globalCatalogServer):$GCPort" -Properties userPrincipalName
+                    # if an object is not located in the local domain query the Global Catalog (GC)
+                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Server "$($globalCatalogServer):$GCPort" -Properties userPrincipalName
+                }
+            } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
+                Write-Host "Distinguised Name (DN) lookup parsing error: $($owner) (SendOnBehalf) -> continuing"
             }
 
             # if an object was located get its Universal Principal Name and Distinguised Name
@@ -259,14 +263,18 @@ function Get-FullAccessPermissions {
     
     foreach($owner in $fullAccess) {
 
-        # attempt to get the owner's distinguised name (DN)
+        # attempt to get the owner's distinguised name (DN) using it's UPN or Name
         # do not show an account if it is listed with full access permissions to itself (unknown why this occurs in some instances)
         if($mail.UserPrincipalName -notlike $owner.User) {  
             
-            if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'") -eq $null) {
+            try {
+                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'") -eq $null) {
                 
-                # if an object is not located in the local domain query the Global Catalog (GC)
-                $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'" -Server "$($globalCatalogServer):$GCPort"
+                    # if an object is not located in the local domain query the Global Catalog (GC)
+                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'" -Server "$($globalCatalogServer):$GCPort"
+                }
+            } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
+                Write-Host "Distinguised Name (DN) lookup parsing error: $($owner.User) (FullAccess) -> continuing"
             }
 
             # if an object was located get its Distinguised Name
@@ -307,20 +315,16 @@ function Get-SendAsPermissions {
         # if a SID is unresolved don't attempt to look it up in Active Directory
         if ($owner.Trustee -notlike "S-1-5-21-*") {
 
-            # try to find the AD object by UPN
-            if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'") -eq $null) {
+            try {
+                # try to find the AD object by UPN or Name
+                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'") -eq $null) {
                 
-                # try to find the AD object by UPN in the Global Catalog (GC)
-                $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'" -Server "$($globalCatalogServer):$GCPort"
+                    # try to find the AD object by UPN in the Global Catalog (GC)
+                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'" -Server "$($globalCatalogServer):$GCPort"
+                }
+            } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
+                Write-Host "Distinguised Name (DN) lookup parsing error: $($owner.Trustee) (SendAs) -> continuing"
             }
-
-            <#
-            # if unable to find the AD object via UPN look for it by Name 
-            if (($userInfo -eq $null) -and ($userInfo = Get-ADObject -Filter "Name -like '$($owner.Trustee)'") -eq $null) {
-                
-                # try to find the AD object by Name in the GC
-                $userInfo = Get-ADObject -Filter "Name -like '$($owner.Trustee)'" -Server "$($globalCatalogServer):$GCPort"
-            }#>
 
             # if an object was located get its Distinguised Name
             if($userInfo -ne $null) {
