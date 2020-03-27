@@ -5,7 +5,7 @@ The script queries your O365 environment for a given set of cloud mailboxes and 
 * `Get-Mailbox`
 * `Get-MailboxPermissions`
 * `Get-RecipientPermission`
-* `Get-ADUser`
+* `Get-ADObject`
 
 ## Major Note
 The `$fiterString` variable searches your O365 environment for a group of mailboxes of interest.  **You must change** it accordingly to match your needs.  I didn't include it as a script option because of how I wanted the script cmdlet to work and my choice of parameter sets.
