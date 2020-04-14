@@ -40,7 +40,10 @@
     An optional file name can be specified for the generated CSV output (default name: MailboxPermissions.csv)
 
 .PARAMETER OutputTerminal
-    Display the results to the PowerShell terminal instead of writing them to a CSV file.  This output is a custom object so alternatively it can be pipled to other PowerShell commands.
+    Display the results to the PowerShell terminal instead of writing them to a CSV file.  This output is a custom object so alternatively it can be pipled to other PowerShell commands for additional processing.
+
+.PARAMETER PermissionsType
+    By default all permission types are queried.  Use this option to query a specific one: SendOnBehalfOnly, FullAccessOnly, SendAsOnly
     
 .EXAMPLE
     Get-O365MailboxPermissions.ps1 -Location Beijing
@@ -58,7 +61,7 @@
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 
 .NOTES
-    Version 0.4 - Last Modified 27 MAR 2020
+    Version 0.41 - Last Modified 14 APR 2020
     Author: Sam Pursglove
 
 
@@ -133,7 +136,7 @@ param
     [Parameter(Mandatory=$false,
                ValueFromPipeline=$false,  
                HelpMessage='Query a single permission type: SendOnBehalf, FullAccess, or SendAs (default: all permissions types)')]
-    [ValidateSet('SendOnBehalfOnly','FullAccessOnly','SendAsOnly')]$PermissionsType
+    [ValidateSet('SendOnBehalfOnly','FullAccessOnly','SendAsOnly')][string]$PermissionsType
 )
 
 Set-StrictMode -Version 3
