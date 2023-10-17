@@ -1,9 +1,9 @@
 ﻿<#
 .SYNOPSIS
-    Looks for O365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest. 
+    Looks for M365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest. 
 
 .DESCRIPTION
-    To run this script your organization must assigned the appropriate O365 permissions/roles to execute the Get-Mailbox, Get-MailboxPermissions, Get-RecipientPermission, and Get-ADObject Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
+    To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-Mailbox, Get-MailboxPermissions, Get-RecipientPermission, and Get-ADObject Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
 
     
     SendOnBehalf:
@@ -26,7 +26,7 @@
         Managed Availability Servers
         Public Folder Management
     
-    It also pulls the full distinguised name (DN) for each account as a reference (for both user and group Active Directory objects), primarily to identify accounts outside of the local organizational unit (OU).  In some instances the mailbox owner is returned as a result with having full access permissions to their own mailbox.  If this occurs the script does not include that result to provide for easier analysis.
+    It also pulls the full distinguished name (DN) for each account as a reference (for both user and group Active Directory objects), primarily to identify accounts outside of the local organizational unit (OU).  In some instances the mailbox owner is returned as a result with having full access permissions to their own mailbox.  If this occurs the script does not include that result to provide for easier analysis.
 
     
     SendAs (the security principal can send messages that appear as if they are the mailbox owner (i.e., they impersonate them)):
@@ -46,22 +46,22 @@
     By default all permission types are queried.  Use this option to query a specific one: SendOnBehalfOnly, FullAccessOnly, SendAsOnly
     
 .EXAMPLE
-    Get-O365MailboxPermissions.ps1 -Location Beijing
+    Get-M365MailboxPermissions.ps1 -Location Beijing
 
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'MailboxPermissions.csv' in the current working directory location.
     
 .EXAMPLE
-    Get-O365MailboxPermissions.ps1 -Location Beijing -CsvFileName BeijingMailboxPermissions.csv
+    Get-M365MailboxPermissions.ps1 -Location Beijing -CsvFileName BeijingMailboxPermissions.csv
 
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'BeijingMailboxPermissions.csv' in the current working directory location.
 
 .EXAMPLE
-    Get-O365MailboxPermissions.ps1 -Location Beijing -OutputTerminal
+    Get-M365MailboxPermissions.ps1 -Location Beijing -OutputTerminal
 
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 
 .NOTES
-    Version 0.41 - Last Modified 14 APR 2020
+    Version 0.2 - Last Modified 17 OCT 2023
     Author: Sam Pursglove
 
 
@@ -142,7 +142,7 @@ param
 Set-StrictMode -Version 3
 
 
-# helper function to get the distinguised name of an object
+# helper function to get the distinguished name of an object
 # if there is more than one it displays each as a string
 function Get-DistinguishedName {
     Param (
@@ -217,7 +217,7 @@ function Get-SendOnBehalfPermissions {
         # get the SendOnBehalf owner(s) for each mailbox that has a non-null value for this property
         $owners = Select-Object -InputObject $mail -ExpandProperty GrantSendOnBehalfTo 
     
-        # obtain the distinguisted name and user principal name for each SendOnBehalf owner
+        # obtain the distinguished name and user principal name for each SendOnBehalf owner
         foreach($owner in $owners) {
             try {
                 if (($userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName) -eq $null) {
@@ -226,10 +226,10 @@ function Get-SendOnBehalfPermissions {
                     $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Server "$($globalCatalogServer):$GCPort" -Properties userPrincipalName
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
-                Write-Host "Distinguised Name (DN) lookup parsing error: $($owner) (SendOnBehalf) -> continuing"
+                Write-Host "Distinguished Name (DN) lookup parsing error: $($owner) (SendOnBehalf) -> continuing"
             }
 
-            # if an object was located get its Universal Principal Name and Distinguised Name
+            # if an object was located get its Universal Principal Name and Distinguished Name
             if($userInfo -ne $null) {
                 $userDN  = Get-DistinguishedName $userInfo
 
@@ -241,7 +241,7 @@ function Get-SendOnBehalfPermissions {
                 }
 
             } else {
-                $userDN  = "Cannot locate the object's User Principal Name (UPN) and Distinguised Name (DN)"
+                $userDN  = "Cannot locate the object's User Principal Name (UPN) and Distinguished Name (DN)"
                 $userUPN = "$owner"
             }
 
@@ -273,7 +273,7 @@ function Get-FullAccessPermissions {
     
     foreach($owner in $fullAccess) {
 
-        # attempt to get the owner's distinguised name (DN) using it's UPN or Name
+        # attempt to get the owner's distinguished name (DN) using it's UPN or Name
         # do not show an account if it is listed with full access permissions to itself (unknown why this occurs in some instances)
         if($mail.UserPrincipalName -notlike $owner.User) {  
             
@@ -284,10 +284,10 @@ function Get-FullAccessPermissions {
                     $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'" -Server "$($globalCatalogServer):$GCPort"
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
-                Write-Host "Distinguised Name (DN) lookup parsing error: $($owner.User) (FullAccess) -> continuing"
+                Write-Host "Distinguished Name (DN) lookup parsing error: $($owner.User) (FullAccess) -> continuing"
             }
 
-            # if an object was located get its Distinguised Name
+            # if an object was located get its Distinguished Name
             if($userInfo -ne $null) {
                 $userDN  = Get-DistinguishedName $userInfo
             } else {
@@ -333,10 +333,10 @@ function Get-SendAsPermissions {
                     $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'" -Server "$($globalCatalogServer):$GCPort"
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
-                Write-Host "Distinguised Name (DN) lookup parsing error: $($owner.Trustee) (SendAs) -> continuing"
+                Write-Host "Distinguished Name (DN) lookup parsing error: $($owner.Trustee) (SendAs) -> continuing"
             }
 
-            # if an object was located get its Distinguised Name
+            # if an object was located get its Distinguished Name
             if($userInfo -ne $null) {
                 $userDN  = Get-DistinguishedName $userInfo
             } else {
@@ -362,14 +362,15 @@ $mailboxPermissions = New-Object System.Collections.ArrayList  # global array to
 $globalCatalogServer= Get-ADDomainController -Discover -Service GlobalCatalog # GC server for AD object lookups outside domain of interest
 filterString       = "OrganizationalUnit -like '*$($Location)*' -and IsMailboxEnabled -eq 'True'"
 
-Write-Progress -Activity "Get-O365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
-$mailboxes = Get-Mailbox -Filter $filterString -ResultSize Unlimited
+Write-Progress -Activity "Get-M365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
+#$mailboxes = Get-Mailbox -Filter $filterString -ResultSize Unlimited
+$mailboxes = Get-Mailbox -Filter "CustomAttribute7 -like '*$($Location)*' -and IsMailboxEnabled -eq 'True'" -ResultSize Unlimited
 
 
 # main script loop
 foreach($mailbox in $mailboxes) {
 
-    $activity        = "Get-O365MailboxPermissions for $($Location) ($($counter) of $($mailboxes.Length) mailboxes)"
+    $activity        = "Get-M365MailboxPermissions for $($Location) ($($counter) of $($mailboxes.Length) mailboxes)"
     $currentStatus   = "Getting permissions for $($mailbox.DisplayName)"
     $percentComplete = [int](($counter/$mailboxes.Length)*100)
     
