@@ -360,11 +360,10 @@ $GCPort             = 3268                                     # global catalog 
 $notUniqueName      = $false                                   # flag to warn if an AD user name search returns non-unique results
 $mailboxPermissions = New-Object System.Collections.ArrayList  # global array to hold all output data
 $globalCatalogServer= Get-ADDomainController -Discover -Service GlobalCatalog # GC server for AD object lookups outside domain of interest
-filterString       = "OrganizationalUnit -like '*$($Location)*' -and IsMailboxEnabled -eq 'True'"
+$filterString       = "OrganizationalUnit -like '*$($Location)*' -and IsMailboxEnabled -eq 'True'"
 
 Write-Progress -Activity "Get-M365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
-#$mailboxes = Get-Mailbox -Filter $filterString -ResultSize Unlimited
-$mailboxes = Get-Mailbox -Filter "CustomAttribute7 -like '*$($Location)*' -and IsMailboxEnabled -eq 'True'" -ResultSize Unlimited
+$mailboxes = Get-Mailbox -Filter $filterString -ResultSize Unlimited
 
 
 # main script loop
