@@ -1,9 +1,8 @@
 ﻿<#
 .SYNOPSIS
     Looks for M365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest. 
-
 .DESCRIPTION
-    To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-Mailbox, Get-MailboxPermissions, Get-RecipientPermission, and Get-ADObject Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
+    To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-EXOMailbox, Get-EXOMailboxPermissions, Get-EXORecipientPermission, and Get-ADObject Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
 
     
     SendOnBehalf:
@@ -32,36 +31,30 @@
     SendAs (the security principal can send messages that appear as if they are the mailbox owner (i.e., they impersonate them)):
 
     Gets SendAs allowed permissions on a mailbox that is not the owner (i.e., SELF).  Sometimes the permissions owner (i.e., the trustee) is the same as the mailbox owner and in these instances those results are removed.  If the permissions owner is an unresolved/orphaned SID the attempt to query its DN are bypassed.  If an Active Directory user look-up is attempted on other objects and failed this is noted in the OrganizationUnit field.
-
 .PARAMETER Location
     The location or organizational unit for the mailboxes of interest.
-    
+.PARAMETER UserPrincipleName
+    Specify the account that you want to use to connect.
 .PARAMETER CsvFileName
     An optional file name can be specified for the generated CSV output (default name: MailboxPermissions.csv)
-
 .PARAMETER OutputTerminal
     Display the results to the PowerShell terminal instead of writing them to a CSV file.  This output is a custom object so alternatively it can be pipled to other PowerShell commands for additional processing.
-
 .PARAMETER PermissionsType
     By default all permission types are queried.  Use this option to query a specific one: SendOnBehalfOnly, FullAccessOnly, SendAsOnly
-    
 .EXAMPLE
-    Get-M365MailboxPermissions.ps1 -Location Beijing
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com
 
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'MailboxPermissions.csv' in the current working directory location.
-    
 .EXAMPLE
-    Get-M365MailboxPermissions.ps1 -Location Beijing -CsvFileName BeijingMailboxPermissions.csv
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -CsvFileName BeijingMailboxPermissions.csv
 
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'BeijingMailboxPermissions.csv' in the current working directory location.
-
 .EXAMPLE
-    Get-M365MailboxPermissions.ps1 -Location Beijing -OutputTerminal
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -OutputTerminal
 
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
-
 .NOTES
-    Version 0.2 - Last Modified 17 OCT 2023
+    Version 1.01 - Last Modified 24 MAY 2024
     Author: Sam Pursglove
 
 
@@ -121,6 +114,11 @@ param
                HelpMessage='Enter the mailbox search location')]
     [string]$Location,
 
+    [Parameter(Mandatory=$true,
+               ValueFromPipeline=$false,
+               HelpMessage='Enter the user principle name')]
+    [string]$UserPrincipleName,
+
     [Parameter(Mandatory=$false, 
                ValueFromPipeline=$false, 
                ParameterSetName='Csv', 
@@ -150,14 +148,19 @@ function Get-DistinguishedName {
         [System.Object[]]$adObject
     )
 
-    if($adObject.Count -gt 1) {
-        $results = $adObject.DistinguishedName | ForEach-Object {$_.Split(",")[-4..-1]}
-        $results = $results -join ','
+    # capture of the DN starting from the first OU= paramater
+    $results = $adObject.DistinguishedName | 
+        ForEach-Object {
+            $_ -match ",OU=[a-zA-z ]+,DC=.+$" | Out-Null
+            $tempStr = $Matches.Values
+            $tempStr.Substring(1, $tempStr.Length - 1)
+        }
+
+    if (($results | Measure-Object).Count -gt 1) {
+        $results = $results -join '|'
         $script:notUniqueName = $true # flag to denote if an object name is not unique within AD, all results are returned
-    } else {
-        $results = $adObject.DistinguishedName.Split(",")[-4..-1] -join ','
     }
-    
+
     $results
 }
 
@@ -171,10 +174,10 @@ function Get-UserPrincipalName {
     )
 
     if($adObject.Count -gt 1) {
-        $results = $adObject.UserPrincipalName -join ','
+        $results = $adObject.UserPrincipalName -join '|'
         $script:notUniqueName = $true # flag to denote if an object name is not unique within AD, all results are returned
     } else {
-        $results = -join $adObject.UserPrincipalName
+        $results = $adObject.UserPrincipalName
     }
     
     $results
@@ -220,10 +223,22 @@ function Get-SendOnBehalfPermissions {
         # obtain the distinguished name and user principal name for each SendOnBehalf owner
         foreach($owner in $owners) {
             try {
-                if (($userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName) -eq $null) {
+                # object lookup in the local domain
+                $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName
                 
-                    # if an object is not located in the local domain query the Global Catalog (GC)
-                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Server "$($globalCatalogServer):$GCPort" -Properties userPrincipalName
+                # if an object is not located in the local domain query the Global Catalog (GC)
+                if ($userInfo -eq $null) {
+                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName -Server "$($globalCatalogServer):$GCPort"
+                }
+
+                # if the object hasn't been located search in the local domain using a wildcard
+                if ($userInfo -eq $null) {
+                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)*'" -Properties userPrincipalName
+                }
+
+                # if an object is not located in the local domain query the Global Catalog (GC) using a wildcard
+                if ($userInfo -eq $null) {
+                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)*'" -Properties userPrincipalName -Server "$($globalCatalogServer):$GCPort"
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                 Write-Host "Distinguished Name (DN) lookup parsing error: $($owner) (SendOnBehalf) -> continuing"
@@ -263,7 +278,7 @@ function Get-FullAccessPermissions {
         $mail
     )
 
-    $fullAccess = Get-MailboxPermission -Identity $mail.UserPrincipalName | 
+    $fullAccess = Get-EXOMailboxPermission -Identity $mail.UserPrincipalName | 
         Where-Object {
             $_.Deny -eq $false -and 
             $_.IsInherited -eq $false -and
@@ -312,7 +327,7 @@ function Get-SendAsPermissions {
     )
 
     # show accounts that have send as permissions to an account other than their own
-    $recipient = Get-RecipientPermission -Identity $mail.UserPrincipalName | 
+    $recipient = Get-EXORecipientPermission -Identity $mail.UserPrincipalName | 
         Where-Object { 
             $_.Trustee -notlike "NT AUTHORITY\SELF" -and 
             $_.Trustee -notlike $mail.UserPrincipalName -and
@@ -355,15 +370,60 @@ function Get-SendAsPermissions {
 }
 
 
+# Get folder permissions for the given mailbox
+function Get-FolderPermissions {
+    param (
+        [Parameter(Mandatory)]
+        $mail
+    )
+
+    $r = [regex]'\\'
+      
+    $foldPermissions = (Get-EXOMailboxFolderStatistics $mail.UserPrincipalName).Identity | 
+        ForEach-Object {$r.Replace($_, ':\', 1)} | 
+        Get-EXOMailboxFolderPermission -ErrorAction SilentlyContinue |
+        Where-Object {
+            ($_.User -notlike 'Default' -and $_.User -notlike 'Anonymous') -or $_.AccessRights -notlike 'None'
+        } | Format-Table FolderName,User,AccessRights
+}
+
+# Confirm the required PowerShell modules are available or installed.
+if (Get-Module ActiveDirectory) {
+    Write-Output 'The Active Directy PowerShell module is installed.'
+} else {
+    try {
+        Import-Module ActiveDirectory -ErrorAction Stop
+        Write-Output 'The Active Directy PowerShell module was imported.'
+    } catch [System.IO.FileNotFoundException] {
+        Write-Output 'The Active Directory PowerShell module is unavailable.  Exiting.'
+        Return
+    }
+}
+
+if (Get-Module exchangeonlinemanagement) {
+    Write-Output 'The Exchange Online PowerShell module is installed.'
+} else {
+    try {
+        Import-Module exchangeonlinemanagement -ErrorAction Stop
+        Write-Output 'The Exchange Online PowerShell module was imported.'
+    } catch {
+        Write-Output 'The Exchange Online PowerShell module is unavailable.  Exiting.'
+        Return
+    }
+}
+
 $counter            = 1                                        # global progress counter variable
 $GCPort             = 3268                                     # global catalog server port number
 $notUniqueName      = $false                                   # flag to warn if an AD user name search returns non-unique results
 $mailboxPermissions = New-Object System.Collections.ArrayList  # global array to hold all output data
 $globalCatalogServer= Get-ADDomainController -Discover -Service GlobalCatalog # GC server for AD object lookups outside domain of interest
-$filterString       = "OrganizationalUnit -like '*$($Location)*' -and IsMailboxEnabled -eq 'True'"
+$filterString       = "CustomAttribute7 -like '*$($Location)*'" # filter to find mailboxes of interest
 
-Write-Progress -Activity "Get-M365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
-$mailboxes = Get-Mailbox -Filter $filterString -ResultSize Unlimited
+Connect-ExchangeOnline -UserPrincipalName $UserPrincipleName
+
+Write-Progress -Activity "Get-O365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
+$mailboxes = Get-EXOMailbox -Filter $filterString -Properties 'GrantSendOnBehalfTo','IsMailboxEnabled' -ResultSize Unlimited |
+    Where-Object {$_.IsMailboxEnabled -eq 'True'}
 
 
 # main script loop
