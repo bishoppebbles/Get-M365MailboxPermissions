@@ -35,8 +35,10 @@
     The location or organizational unit for the mailboxes of interest.
 .PARAMETER UserPrincipleName
     Specify the account that you want to use to connect.
-.PARAMETER CsvFileName
-    An optional file name can be specified for the generated CSV output (default name: MailboxPermissions.csv)
+.PARAMETER MailboxRightsCsv
+    An optional file name can be specified for the generated mailbox rights CSV output (default name: <Location>_Mailbox_Rights.csv)
+.PARAMETER MailboxFolderRightsCsv
+    An optional file name can be specified for the generated mailbox folder rights CSV output (default name: <Location>_Mailbox_Folder_Rights.csv)
 .PARAMETER OutputTerminal
     Display the results to the PowerShell terminal instead of writing them to a CSV file.  This output is a custom object so alternatively it can be pipled to other PowerShell commands for additional processing.
 .PARAMETER PermissionsType
@@ -44,17 +46,17 @@
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com
 
-    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'MailboxPermissions.csv' in the current working directory location.
+    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.
 .EXAMPLE
-    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -CsvFileName BeijingMailboxPermissions.csv
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -CsvFileName BeijingMailboxRights.csv
 
-    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'BeijingMailboxPermissions.csv' in the current working directory location.
+    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'BeijingMailboxRights.csv' in the current working directory location.
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -OutputTerminal
 
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.01 - Last Modified 24 MAY 2024
+    Version 1.02 - Last Modified 29 MAY 2024
     Author: Sam Pursglove
 
 
@@ -122,8 +124,14 @@ param
     [Parameter(Mandatory=$false, 
                ValueFromPipeline=$false, 
                ParameterSetName='Csv', 
-               HelpMessage='Optionally, specify the name of the output CSV file (default: MailboxPermissions.csv)')]
-    [string]$CsvFileName='MailboxPermissions.csv',
+               HelpMessage='Optionally, specify the name of the output CSV file (default: <Location>_Mailbox_Permissions.csv)')]
+    [string]$MailboxRightsCsv='Mailbox_Rights.csv',
+
+    [Parameter(Mandatory=$false, 
+               ValueFromPipeline=$false, 
+               ParameterSetName='Csv', 
+               HelpMessage='Optionally, specify the name of the output CSV file (default: <Location>_Mailbox_Folder_Rights.csv)')]
+    [string]$MailboxFolderRightsCsv='Mailbox_Folder_Rights.csv',
 
     [Parameter(Mandatory=$true,
                ValueFromPipeline=$false, 
@@ -198,11 +206,34 @@ function Add-MailboxPermissionObject {
     )
 
     $mailboxPermissions.Add(
-        [PSCustomObject] @{
+        [PSCustomObject]@{
             'Mailbox'           = $Mailbox;
             'SecurityPrincipal' = $SecurityPrincipal;
             'OrganizationalUnit'= $OrganizationalUnit;
             'AccessRight'       = $AccessRight;
+        }
+    ) > $null
+}
+
+# helper function to add mailbox folder permissions results to the global array container
+function Add-MailboxFolderPermissionObject {
+    Param (
+        [Parameter(Position=0,Mandatory=$true)]
+        $Mailbox,
+        [Parameter(Position=1,Mandatory=$true)]
+        $FolderName,
+        [Parameter(Position=2,Mandatory=$true)]
+        $User,
+        [Parameter(Position=3,Mandatory=$true)]
+        $AccessRight
+    )
+
+    $mailboxFolderPermissions.Add(
+        [PSCustomObject]@{
+            'Mailbox'    = $Mailbox;
+            'FolderName' = $FolderName;
+            'User       '= $User;
+            'AccessRight'= $AccessRight;
         }
     ) > $null
 }
@@ -377,14 +408,22 @@ function Get-FolderPermissions {
         $mail
     )
 
+    # regex to help format a mailbox's folder path correctly as input to the Get-EXOMailboxFolderPermissions cmdlet
     $r = [regex]'\\'
-      
-    $foldPermissions = (Get-EXOMailboxFolderStatistics $mail.UserPrincipalName).Identity | 
+    
+    $folderPermissions = (Get-EXOMailboxFolderStatistics $mail.UserPrincipalName).Identity | 
         ForEach-Object {$r.Replace($_, ':\', 1)} | 
         Get-EXOMailboxFolderPermission -ErrorAction SilentlyContinue |
-        Where-Object {
-            ($_.User -notlike 'Default' -and $_.User -notlike 'Anonymous') -or $_.AccessRights -notlike 'None'
-        } | Format-Table FolderName,User,AccessRights
+        Where-Object { -not (`
+            (($_.User -like 'Default' -or $_.User -like 'Anonymous') `
+                    -and $_.AccessRights -like 'None') `
+               -or ($_.User -like 'NT:S-1-5-21-*' -and $_.AccessRights -like 'Owner') `
+               -or ($_.User -like $mail.UserPrincipalName)
+        )}
+
+    foreach($folder in $folderPermissions) {
+        Add-MailboxFolderPermissionObject -Mailbox $mail.UserPrincipalName -FolderName $($folder.FolderName) -User $($folder.User.DisplayName) -AccessRight $folder.AccessRights
+    }
 }
 
 # Confirm the required PowerShell modules are available or installed.
@@ -412,17 +451,17 @@ if (Get-Module exchangeonlinemanagement) {
     }
 }
 
-$counter            = 1                                        # global progress counter variable
-$GCPort             = 3268                                     # global catalog server port number
-$notUniqueName      = $false                                   # flag to warn if an AD user name search returns non-unique results
-$mailboxPermissions = New-Object System.Collections.ArrayList  # global array to hold all output data
-$globalCatalogServer= Get-ADDomainController -Discover -Service GlobalCatalog # GC server for AD object lookups outside domain of interest
-$filterString       = "CustomAttribute7 -like '*$($Location)*'" # filter to find mailboxes of interest
+$counter                 = 1                                        # global progress counter variable
+$GCPort                  = 3268                                     # global catalog server port number
+$notUniqueName           = $false                                   # flag to warn if an AD user name search returns non-unique results
+$mailboxPermissions      = New-Object System.Collections.ArrayList  # global array to hold all mailbox rights output data
+$mailboxFolderPermissions= New-Object System.Collections.ArrayList  # global array to hold all folder permissions output data
+$globalCatalogServer     = Get-ADDomainController -Discover -Service GlobalCatalog # GC server for AD object lookups outside domain of interest
 
 Connect-ExchangeOnline -UserPrincipalName $UserPrincipleName
 
 Write-Progress -Activity "Get-O365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
-$mailboxes = Get-EXOMailbox -Filter $filterString -Properties 'GrantSendOnBehalfTo','IsMailboxEnabled' -ResultSize Unlimited |
+$mailboxes = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Properties 'GrantSendOnBehalfTo','IsMailboxEnabled' -ResultSize Unlimited |
     Where-Object {$_.IsMailboxEnabled -eq 'True'}
 
 
@@ -471,5 +510,12 @@ if ($notUniqueName) {
 if ($OutputTerminal) {
     $mailboxPermissions
 } else {
-    $mailboxPermissions | Export-Csv -Path $CsvFileName -NoTypeInformation
+    $mailboxPermissions | Export-Csv -Path "$($Location)_$($Mailbox_Rights.Csv)" -NoTypeInformation
+}
+
+# output data to a CSV unless the -OutputTerminal switch is used
+if ($OutputTerminal) {
+    $mailboxFolderPermissions
+} else {
+    $mailboxFolderPermissions | Export-Csv -Path "$($Location)_$($Mailbox_Folder_Rights.Csv)" -NoTypeInformation
 }
