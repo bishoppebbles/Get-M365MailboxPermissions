@@ -31,10 +31,20 @@
     SendAs (the security principal can send messages that appear as if they are the mailbox owner (i.e., they impersonate them)):
 
     Gets SendAs allowed permissions on a mailbox that is not the owner (i.e., SELF).  Sometimes the permissions owner (i.e., the trustee) is the same as the mailbox owner and in these instances those results are removed.  If the permissions owner is an unresolved/orphaned SID the attempt to query its DN are bypassed.  If an Active Directory user look-up is attempted on other objects and failed this is noted in the OrganizationUnit field.
+
+    
+    Mailbox Folder Rights:
+    
+    Gets a mailbox's statistics to build a list of its folder paths and then pulls each folder's permissions.  Rights are excluded under the following circumstances:
+        A right's user is the same as the mailbox's User Principal Name.
+        If a user of 'Default' or 'Anonymous' is assigned an access right of 'none.'
+        If a user is an unresolved SID and is assigned an access right of 'Owner.'
 .PARAMETER Location
     The location or organizational unit for the mailboxes of interest.
-.PARAMETER UserPrincipleName
+.PARAMETER UserPrincipalName
     Specify the account that you want to use to connect.
+.PARAMETER IncludeFolderRights
+    Include the collection of the rights assigned to a mailbox's folders.
 .PARAMETER MailboxRightsCsv
     An optional file name can be specified for the generated mailbox rights CSV output (default name: <Location>_Mailbox_Rights.csv)
 .PARAMETER MailboxFolderRightsCsv
@@ -42,7 +52,7 @@
 .PARAMETER OutputTerminal
     Display the results to the PowerShell terminal instead of writing them to a CSV file.  This output is a custom object so alternatively it can be pipled to other PowerShell commands for additional processing.
 .PARAMETER PermissionsType
-    By default all permission types are queried.  Use this option to query a specific one: SendOnBehalfOnly, FullAccessOnly, SendAsOnly
+    By default all permission types are queried except Folder Rights due to the speed.  Use this option to query a specific one: SendOnBehalfOnly, FullAccessOnly, SendAsOnly, FolderRightsOnly
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com
 
@@ -56,7 +66,7 @@
 
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.02 - Last Modified 29 MAY 2024
+    Version 1.03 - Last Modified 31 MAY 2024
     Author: Sam Pursglove
 
 
@@ -118,8 +128,13 @@ param
 
     [Parameter(Mandatory=$true,
                ValueFromPipeline=$false,
-               HelpMessage='Enter the user principle name')]
-    [string]$UserPrincipleName,
+               HelpMessage='Enter the user principal name')]
+    [string]$UserPrincipalName,
+
+    [Parameter(Mandatory=$false,
+               ValueFromPipeline=$false,
+               HelpMessage="Switch to include the collection of a mailbox's folder access rights (default: false)")]
+    [switch]$IncludeFolderRights=$false,
 
     [Parameter(Mandatory=$false, 
                ValueFromPipeline=$false, 
@@ -141,8 +156,8 @@ param
 
     [Parameter(Mandatory=$false,
                ValueFromPipeline=$false,  
-               HelpMessage='Query a single permission type: SendOnBehalf, FullAccess, or SendAs (default: all permissions types)')]
-    [ValidateSet('SendOnBehalfOnly','FullAccessOnly','SendAsOnly')][string]$PermissionsType
+               HelpMessage='Query a single permission type: SendOnBehalf, FullAccess, SendAs, or FolderRights (default: all permissions types except FolderRights)')]
+    [ValidateSet('SendOnBehalfOnly','FullAccessOnly','SendAsOnly','FolderRightsOnly')][string]$PermissionsType
 )
 
 Set-StrictMode -Version 3
@@ -232,7 +247,7 @@ function Add-MailboxFolderPermissionObject {
         [PSCustomObject]@{
             'Mailbox'    = $Mailbox;
             'FolderName' = $FolderName;
-            'User       '= $User;
+            'User'       = $User;
             'AccessRight'= $AccessRight;
         }
     ) > $null
@@ -414,12 +429,13 @@ function Get-FolderPermissions {
     $folderPermissions = (Get-EXOMailboxFolderStatistics $mail.UserPrincipalName).Identity | 
         ForEach-Object {$r.Replace($_, ':\', 1)} | 
         Get-EXOMailboxFolderPermission -ErrorAction SilentlyContinue |
-        Where-Object { -not (`
-            (($_.User -like 'Default' -or $_.User -like 'Anonymous') `
-                    -and $_.AccessRights -like 'None') `
-               -or ($_.User -like 'NT:S-1-5-21-*' -and $_.AccessRights -like 'Owner') `
-               -or ($_.User -like $mail.UserPrincipalName)
-        )}
+        Where-Object {
+            -not (`
+                (($_.User -like 'Default' -or $_.User -like 'Anonymous') -and $_.AccessRights -like 'None') `
+                -or ($_.User -like 'NT:S-1-5-21-*' -and $_.AccessRights -like 'Owner') `
+                -or ($_.User -like $mail.UserPrincipalName)
+            )
+        }
 
     foreach($folder in $folderPermissions) {
         Add-MailboxFolderPermissionObject -Mailbox $mail.UserPrincipalName -FolderName $($folder.FolderName) -User $($folder.User.DisplayName) -AccessRight $folder.AccessRights
@@ -458,7 +474,7 @@ $mailboxPermissions      = New-Object System.Collections.ArrayList  # global arr
 $mailboxFolderPermissions= New-Object System.Collections.ArrayList  # global array to hold all folder permissions output data
 $globalCatalogServer     = Get-ADDomainController -Discover -Service GlobalCatalog # GC server for AD object lookups outside domain of interest
 
-Connect-ExchangeOnline -UserPrincipalName $UserPrincipleName
+Connect-ExchangeOnline -UserPrincipalName $UserPrincipalName
 
 Write-Progress -Activity "Get-O365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
 $mailboxes = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Properties 'GrantSendOnBehalfTo','IsMailboxEnabled' -ResultSize Unlimited |
@@ -487,6 +503,11 @@ foreach($mailbox in $mailboxes) {
         Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendAs Permission"
         Get-SendAsPermissions $mailbox
     
+    } elseif ($PermissionsType -like 'FolderRightsOnly') {
+        
+        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "Folder Rights"
+        Get-FolderPermissions $mailbox
+    
     } else {
     
         Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendOnBehalf Permission"
@@ -497,6 +518,11 @@ foreach($mailbox in $mailboxes) {
     
         Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendAs Permission"
         Get-SendAsPermissions $mailbox
+
+        if ($IncludeFolderRights) {
+            Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "Folder Rights"
+            Get-FolderPermissions $mailbox
+        }
     }
 
     $counter++
