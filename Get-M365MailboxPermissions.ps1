@@ -37,8 +37,7 @@
     
     Gets a mailbox's statistics to build a list of its folder paths and then pulls each folder's permissions.  Rights are excluded under the following circumstances:
         A right's user is the same as the mailbox's User Principal Name.
-        If a user is 'Default.'
-        If a user is 'Anonymous' and is assigned an access right of 'none.'
+        If a user of 'Default' or 'Anonymous' is assigned an access right of 'none.'
         If a user is an unresolved SID and is assigned an access right of 'Owner.'
 .PARAMETER Location
     The location or organizational unit for the mailboxes of interest.
@@ -67,7 +66,7 @@
 
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.04 - Last Modified 03 June 2024
+    Version 1.05 - Last Modified 03 June 2024
     Author: Sam Pursglove
 
 
@@ -116,32 +115,6 @@
       * Inherit ChangeOwner, ChangePermission, DeleteItem, and ReadPermission
     - Managed Availability Servers
       * Inherit ReadPermission
-
-    Folder access roles defined: 
-        Author: CreateItems, DeleteOwnedItems, EditOwnedItems, FolderVisible, ReadItems
-        Contributor: CreateItems, FolderVisible
-        Editor: CreateItems, DeleteAllItems, DeleteOwnedItems, EditAllItems, EditOwnedItems, FolderVisible, ReadItems
-        NonEditingAuthor: CreateItems, DeleteOwnedItems, FolderVisible, ReadItems
-        Owner: CreateItems, CreateSubfolders, DeleteAllItems, DeleteOwnedItems, EditAllItems, EditOwnedItems, FolderContact, FolderOwner, FolderVisible, ReadItems
-        PublishingAuthor: CreateItems, CreateSubfolders, DeleteOwnedItems, EditOwnedItems, FolderVisible, ReadItems
-        PublishingEditor: CreateItems, CreateSubfolders, DeleteAllItems, DeleteOwnedItems, EditAllItems, EditOwnedItems, FolderVisible, ReadItems
-        Reviewer: FolderVisible, ReadItems
-    Specific calendar folder roles:
-        AvailabilityOnly: View only availability data
-        LimitedDetails: View availability data with subject and location
-
-    Individual folder permissions defined:
-        None: The user has no access to view or interact with the folder or its contents.
-        CreateItems: The user can create items within the specified folder.
-        CreateSubfolders: The user can create subfolders in the specified folder.
-        DeleteAllItems: The user can delete all items in the specified folder.
-        DeleteOwnedItems: The user can only delete items that they created from the specified folder.
-        EditAllItems: The user can edit all items in the specified folder.
-        EditOwnedItems: The user can only edit items that they created in the specified folder.
-        FolderContact: The user is the contact for the specified public folder.
-        FolderOwner: The user is the owner of the specified folder. The user can view the folder, move the folder and create subfolders. The user can't read items, edit items, delete items or create items.
-        FolderVisible: The user can view the specified folder, but can't read or edit items within the specified public folder.
-        ReadItems: The user can read items within the specified folder.
 #>
 
 [CmdletBinding(DefaultParameterSetName='Csv')]
@@ -434,7 +407,7 @@ function Get-SendAsPermissions {
             $userDN = "Cannot resolve the object's Security Identifier (SID)"
         }
         
-        Add-MailboxPermissionObject -Mailbox $mail.UserPrincipalName -SecurityPrincipal $owner.Trustee -OrganizationalUnit $userDN -AccessRight 'SendAs'
+        Add-MailboxPermissionObject -Mailbox $($mail.UserPrincipalName) -SecurityPrincipal $owner.Trustee -OrganizationalUnit $userDN -AccessRight 'SendAs'
 
         # clear shared variables
         $userInfo = $null
@@ -458,14 +431,15 @@ function Get-FolderPermissions {
         Get-EXOMailboxFolderPermission -ErrorAction SilentlyContinue |
         Where-Object {
             -not (`
-                (($_.User -like 'Default' -or $_.User -like 'Anonymous') -and $_.AccessRights -like 'None') `
+                ($_.User -like 'Default') `
+                -or ($_.User -like 'Anonymous' -and $_.AccessRights -like 'None') `
                 -or ($_.User -like 'NT:S-1-5-21-*' -and $_.AccessRights -like 'Owner') `
                 -or ($_.User -like $mail.UserPrincipalName)
             )
         }
 
     foreach($folder in $folderPermissions) {
-        Add-MailboxFolderPermissionObject -Mailbox $mail.UserPrincipalName -FolderName $($folder.FolderName) -User $($folder.User.DisplayName) -AccessRight $folder.AccessRights
+        Add-MailboxFolderPermissionObject -Mailbox $mail.UserPrincipalName -FolderName $($folder.FolderName) -User $($folder.User.DisplayName) -AccessRight $($folder.AccessRights)
     }
 }
 
@@ -562,13 +536,13 @@ if ($notUniqueName) {
 # output data to a CSV unless the -OutputTerminal switch is used
 if ($OutputTerminal) {
     $mailboxPermissions
-} else {
-    $mailboxPermissions | Export-Csv -Path "$($Location)_$($Mailbox_Rights.Csv)" -NoTypeInformation
+} elseif ($PermissionsType -notlike 'FolderRightsOnly') {
+    $mailboxPermissions | Export-Csv -Path "$($Location)_$($MailboxRightsCsv)" -NoTypeInformation
 }
 
 # output data to a CSV unless the -OutputTerminal switch is used
 if ($OutputTerminal) {
     $mailboxFolderPermissions
-} else {
-    $mailboxFolderPermissions | Export-Csv -Path "$($Location)_$($Mailbox_Folder_Rights.Csv)" -NoTypeInformation
+} elseif ($IncludeFolderRights -or ($PermissionsType -like 'FolderRightsOnly')) {
+    $mailboxFolderPermissions | Export-Csv -Path "$($Location)_$($MailboxFolderRightsCsv)" -NoTypeInformation
 }
