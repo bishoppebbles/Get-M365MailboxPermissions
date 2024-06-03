@@ -63,7 +63,7 @@
 
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.  It also pulls mailbox folder rights and saves it to a file named 'Beijing_Mailbox_Folder_Rights.csv (note: this is very slow).
 .EXAMPLE
-    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -PermissionsType FolderRights Only
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -PermissionsType FolderRightsOnly
 
     Search for mailboxes with users assigned to Beijing and only write the CSV output of mailbox folder rights to a file named 'Beijing_Mailbox_Folder_Rights.csv' in the current working directory location (note: this is very slow).
 .EXAMPLE
