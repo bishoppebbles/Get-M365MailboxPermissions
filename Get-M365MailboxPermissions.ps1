@@ -38,7 +38,7 @@
     Gets a mailbox's statistics to build a list of its folder paths and then pulls each folder's permissions.  Rights are excluded under the following circumstances:
         A right's user is the same as the mailbox's User Principal Name.
         If a user is 'Default.'
-        If a user is 'Anonymous' and is assigned an access right of 'none.'
+        If a user is assigned an access right of 'none.'
         If a user is an unresolved SID and is assigned an access right of 'Owner.'
 .PARAMETER Location
     The location or organizational unit for the mailboxes of interest.
@@ -59,6 +59,14 @@
 
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.
 .EXAMPLE
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -IncludeFolderRights
+
+    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.  It also pulls mailbox folder rights and saves it to a file named 'Beijing_Mailbox_Folder_Rights.csv (note: this is very slow).
+.EXAMPLE
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -PermissionsType FolderRights Only
+
+    Search for mailboxes with users assigned to Beijing and only write the CSV output of mailbox folder rights to a file named 'Beijing_Mailbox_Folder_Rights.csv' in the current working directory location (note: this is very slow).
+.EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipleName bobsmith@corp.com -CsvFileName BeijingMailboxRights.csv
 
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'BeijingMailboxRights.csv' in the current working directory location.
@@ -67,9 +75,8 @@
 
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.06 - Last Modified 03 June 2024
+    Version 1.07 - Last Modified 03 June 2024
     Author: Sam Pursglove
-
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
 
@@ -81,12 +88,12 @@
     
     AccessRights
     - The permission that the security principal has on the mailbox
-      * ChangeOwner: change the owner of the mailbox
+      * ChangeOwner     : change the owner of the mailbox
       * ChangePermission: change the permissions on the mailbox
-      * DeleteItem: delete the mailbox
-      * ExternalAccount: indicates the account isn't in the same domain
-      * FullAccess: open the mailbox, access its contents, but can't send mail
-      * ReadPermission: read the permissions on the mailbox
+      * DeleteItem      : delete the mailbox
+      * ExternalAccount : indicates the account isn't in the same domain
+      * FullAccess      : open the mailbox, access its contents, but can't send mail
+      * ReadPermission  : read the permissions on the mailbox
     
     IsInherited
     - Whether the permission is inherited (True) or directly assigned to the mailbox (False)
@@ -116,6 +123,8 @@
       * Inherit ChangeOwner, ChangePermission, DeleteItem, and ReadPermission
     - Managed Availability Servers
       * Inherit ReadPermission
+
+    From Add-MailboxFolderPermission help at https://learn.microsoft.com/en-us/powershell/module/exchange/add-mailboxfolderpermission?view=exchange-ps
 
     Folder access roles defined: 
         Author          : CreateItems, DeleteOwnedItems, EditOwnedItems, FolderVisible, ReadItems
@@ -249,10 +258,10 @@ function Add-MailboxPermissionObject {
 
     $mailboxPermissions.Add(
         [PSCustomObject]@{
-            'Mailbox'           = $Mailbox;
-            'SecurityPrincipal' = $SecurityPrincipal;
-            'OrganizationalUnit'= $OrganizationalUnit;
-            'AccessRight'       = $AccessRight;
+            'Mailbox'           = $Mailbox
+            'SecurityPrincipal' = $SecurityPrincipal
+            'OrganizationalUnit'= $OrganizationalUnit
+            'AccessRight'       = $AccessRight
         }
     ) > $null
 }
@@ -267,15 +276,15 @@ function Add-MailboxFolderPermissionObject {
         [Parameter(Position=2,Mandatory=$true)]
         $User,
         [Parameter(Position=3,Mandatory=$true)]
-        $AccessRight
+        $AccessRights
     )
 
     $mailboxFolderPermissions.Add(
         [PSCustomObject]@{
-            'Mailbox'    = $Mailbox;
-            'FolderName' = $FolderName;
-            'User'       = $User;
-            'AccessRight'= $AccessRight;
+            'Mailbox'    = $Mailbox
+            'FolderName' = $FolderName
+            'User'       = $User
+            'AccessRights'= $AccessRights -join '|'
         }
     ) > $null
 }
@@ -457,11 +466,11 @@ function Get-FolderPermissions {
         ForEach-Object {$r.Replace($_, ':\', 1)} | 
         Get-EXOMailboxFolderPermission -ErrorAction SilentlyContinue |
         Where-Object {
-            -not (`
-                ($_.User -like 'Default') `
-                -or ($_.User -like 'Anonymous' -and $_.AccessRights -like 'None') `
-                -or ($_.User -like 'NT:S-1-5-21-*' -and $_.AccessRights -like 'Owner') `
-                -or ($_.User -like $mail.UserPrincipalName)
+            -not (`                
+                ($_.AccessRights -eq 'None') `
+                -or ($_.User -like 'Default') `
+                -or ($_.User -like $mail.UserPrincipalName) `
+                -or ($_.User -like 'NT:S-1-5-21-*' -and $_.AccessRights -eq 'Owner')
             )
         }
 
