@@ -4,7 +4,6 @@
 .DESCRIPTION
     To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-EXOMailbox, Get-EXOMailboxPermissions, Get-EXORecipientPermission, and Get-ADObject Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
 
-    
     SendOnBehalf:
     
     Checks all mailboxes that have user accounts listed under this property.  If there are multiple it displays each account and queries the distinguished name (DN) and universal principal name (UPN) for that account.  In instances where an account has a non-unique name this query will return multiple values and display all of them.  It is up to the analyst to further determine which one(s) are accurate.
@@ -44,6 +43,10 @@
     The location or organizational unit for the mailboxes of interest.
 .PARAMETER UserPrincipalName
     Specify the account that you want to use to connect.
+.PARAMETER SearchBase
+    XXX
+.PARAMETER Server
+    XXX
 .PARAMETER IncludeFolderRights
     Include the collection of the rights assigned to a mailbox's folders.
 .PARAMETER MailboxRightsCsv
@@ -75,7 +78,7 @@
 
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.07 - Last Modified 03 June 2024
+    Version 1.08 - Last Modified 12 July 2024
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -167,8 +170,19 @@ param
                HelpMessage='Enter the user principal name')]
     [string]$UserPrincipalName,
 
+    [Parameter(Mandatory=$false, 
+               ValueFromPipeline=$false, 
+               HelpMessage='AD search location in DN form')]
+    [string]$SearchBase,
+
     [Parameter(Mandatory=$false,
                ValueFromPipeline=$false,
+               HelpMessage='Enter the user principal name')]
+    [string]$Server,
+
+    [Parameter(Mandatory=$false,
+               ValueFromPipeline=$false,
+               ParameterSetName='Csv',
                HelpMessage="Switch to include the collection of a mailbox's folder access rights (default: false)")]
     [switch]$IncludeFolderRights=$false,
 
@@ -201,6 +215,31 @@ Set-StrictMode -Version 3
 
 # helper function to get the distinguished name of an object
 # if there is more than one it displays each as a string
+function Get-UserLocation {
+    Param (
+        [Parameter(Mandatory)]
+        [System.Object[]]$adObject
+    )
+
+    # extra the location name of the user acccount
+    $adObject.msExchExtensionCustomAttribute1 | 
+        ForEach-Object {
+            if($_ -match 'iPostSite\|(.+)') {
+                $results = $Matches[1]
+            }
+                     
+        }
+
+    if ($results -ne $null -and ($results | Measure-Object).Count -gt 1) {
+        $results = $results -join '|'
+        $script:notUniqueName = $true # flag to denote if an object name is not unique within AD, all results are returned
+    }
+
+    $results
+}
+
+
+<# ***BACKUP*** of old (now unused) distinguised name lookup code
 function Get-DistinguishedName {
     Param (
         [Parameter(Mandatory)]
@@ -222,6 +261,7 @@ function Get-DistinguishedName {
 
     $results
 }
+#>
 
 
 # helper function to get the name of an object
@@ -306,21 +346,21 @@ function Get-SendOnBehalfPermissions {
         foreach($owner in $owners) {
             try {
                 # object lookup in the local domain
-                $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName
+                $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server
                 
                 # if an object is not located in the local domain query the Global Catalog (GC)
                 if ($userInfo -eq $null) {
-                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName -Server "$($globalCatalogServer):$GCPort"
+                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server $workstationDnsRoot
                 }
 
                 # if the object hasn't been located search in the local domain using a wildcard
                 if ($userInfo -eq $null) {
-                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)*'" -Properties userPrincipalName
+                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)*'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server
                 }
 
                 # if an object is not located in the local domain query the Global Catalog (GC) using a wildcard
                 if ($userInfo -eq $null) {
-                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)*'" -Properties userPrincipalName -Server "$($globalCatalogServer):$GCPort"
+                    $userInfo = Get-ADObject -Filter "Name -like '$($owner)*'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server $workstationDnsRoot
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                 Write-Host "Distinguished Name (DN) lookup parsing error: $($owner) (SendOnBehalf) -> continuing"
@@ -328,7 +368,7 @@ function Get-SendOnBehalfPermissions {
 
             # if an object was located get its Universal Principal Name and Distinguished Name
             if($userInfo -ne $null) {
-                $userDN  = Get-DistinguishedName $userInfo
+                $userDN  = Get-UserLocation $userInfo
 
                 # a group will not have a UPN so use the name instead
                 if ($userInfo.ObjectClass -notlike 'group') {
@@ -375,10 +415,10 @@ function Get-FullAccessPermissions {
         if($mail.UserPrincipalName -notlike $owner.User) {  
             
             try {
-                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'") -eq $null) {
+                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
                 
                     # if an object is not located in the local domain query the Global Catalog (GC)
-                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'" -Server "$($globalCatalogServer):$GCPort"
+                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.User)' -or Name -like '$($owner.User)'" -Properties msExchExtensionCustomAttribute1 -Server $workstationDnsRoot
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                 Write-Host "Distinguished Name (DN) lookup parsing error: $($owner.User) (FullAccess) -> continuing"
@@ -386,7 +426,7 @@ function Get-FullAccessPermissions {
 
             # if an object was located get its Distinguished Name
             if($userInfo -ne $null) {
-                $userDN  = Get-DistinguishedName $userInfo
+                $userDN  = Get-UserLocation $userInfo
             } else {
                 $userDN = "Cannot locate the object's Universal Principal Name (UPN)"
             }
@@ -424,10 +464,10 @@ function Get-SendAsPermissions {
 
             try {
                 # try to find the AD object by UPN or Name
-                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'") -eq $null) {
+                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
                 
                     # try to find the AD object by UPN in the Global Catalog (GC)
-                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'" -Server "$($globalCatalogServer):$GCPort"
+                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($owner.Trustee)' -or Name -like '$($owner.Trustee)'" -Properties msExchExtensionCustomAttribute1 -Server $workstationDnsRoot
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                 Write-Host "Distinguished Name (DN) lookup parsing error: $($owner.Trustee) (SendAs) -> continuing"
@@ -435,7 +475,7 @@ function Get-SendAsPermissions {
 
             # if an object was located get its Distinguished Name
             if($userInfo -ne $null) {
-                $userDN  = Get-DistinguishedName $userInfo
+                $userDN  = Get-UserLocation $userInfo
             } else {
                 $userDN = "Cannot locate the object's Universal Principal Name (UPN)"
             }
@@ -507,23 +547,42 @@ if (Get-Module exchangeonlinemanagement) {
 $counter                 = 1                                        # global progress counter variable
 $GCPort                  = 3268                                     # global catalog server port number
 $notUniqueName           = $false                                   # flag to warn if an AD user name search returns non-unique results
+$mailboxes               = New-Object System.Collections.ArrayList  # global array to hold all mailbox rights output data
 $mailboxPermissions      = New-Object System.Collections.ArrayList  # global array to hold all mailbox rights output data
 $mailboxFolderPermissions= New-Object System.Collections.ArrayList  # global array to hold all folder permissions output data
-$globalCatalogServer     = Get-ADDomainController -Discover -Service GlobalCatalog # GC server for AD object lookups outside domain of interest
+$workstationDnsRoot      = (Get-ADDomain).DNSRoot
 
 Connect-ExchangeOnline -UserPrincipalName $UserPrincipalName
 
-Write-Progress -Activity "Get-O365MailboxPermissions" -Status "Please Wait: Searching for $($Location) Mailboxes"
-$mailboxes = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Properties 'GrantSendOnBehalfTo','IsMailboxEnabled' -ResultSize Unlimited |
+Write-Output "Please Wait: Searching for $($Location) Mailboxes"
+
+# get M365 mailbox accounts that have not migrated domains
+$mail1 = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited |
     Where-Object {$_.IsMailboxEnabled -eq 'True'}
+
+# get M365 mailbox accounts that have migrated domains
+$users = Get-ADUser -Filter "msExchExtensionCustomAttribute1 -like '*$($Location)*'" -SearchBase $SearchBase -Server $Server
+
+$mail2 = $users | Get-EXOMailbox -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited |
+    Where-Object {$_.IsMailboxEnabled -eq 'True'}
+
+
+# consolidate all mailbox results into a single container object
+foreach($mail in $mail1) {
+    $mailboxes.Add($mail) | Out-Null
+}
+
+foreach($mail in $mail2) {
+    $mailboxes.Add($mail) | Out-Null
+}
 
 
 # main script loop
 foreach($mailbox in $mailboxes) {
 
-    $activity        = "Get-M365MailboxPermissions for $($Location) ($($counter) of $($mailboxes.Length) mailboxes)"
+    $activity        = "Get-M365MailboxPermissions for $($Location) ($($counter) of $($mailboxes.Count) mailboxes)"
     $currentStatus   = "Getting permissions for $($mailbox.DisplayName)"
-    $percentComplete = [int](($counter/$mailboxes.Length)*100)
+    $percentComplete = [int](($counter/$mailboxes.Count)*100)
     
     if ($PermissionsType -like 'SendOnBehalfOnly') {
     
@@ -577,8 +636,6 @@ if ($OutputTerminal) {
 }
 
 # output data to a CSV unless the -OutputTerminal switch is used
-if ($OutputTerminal) {
-    $mailboxFolderPermissions
-} elseif ($IncludeFolderRights -or ($PermissionsType -like 'FolderRightsOnly')) {
+if ($IncludeFolderRights -or ($PermissionsType -like 'FolderRightsOnly')) {
     $mailboxFolderPermissions | Export-Csv -Path "$($Location)_$($MailboxFolderRightsCsv)" -NoTypeInformation
 }
