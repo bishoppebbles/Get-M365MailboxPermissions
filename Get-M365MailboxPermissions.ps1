@@ -78,7 +78,7 @@
 
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.08 - Last Modified 12 July 2024
+    Version 1.09 - Last Modified 02 August 2024
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -170,12 +170,12 @@ param
                HelpMessage='Enter the user principal name')]
     [string]$UserPrincipalName,
 
-    [Parameter(Mandatory=$false, 
+    [Parameter(Mandatory=$true, 
                ValueFromPipeline=$false, 
                HelpMessage='AD search location in DN form')]
     [string]$SearchBase,
 
-    [Parameter(Mandatory=$false,
+    [Parameter(Mandatory=$true,
                ValueFromPipeline=$false,
                HelpMessage='Enter the user principal name')]
     [string]$Server,
@@ -552,7 +552,22 @@ $mailboxPermissions      = New-Object System.Collections.ArrayList  # global arr
 $mailboxFolderPermissions= New-Object System.Collections.ArrayList  # global array to hold all folder permissions output data
 $workstationDnsRoot      = (Get-ADDomain).DNSRoot
 
-Connect-ExchangeOnline -UserPrincipalName $UserPrincipalName
+
+# Connection to Exchange Online unless a v3 session is already established
+if(($conn = Get-ConnectionInformation)) {
+    foreach($c in $conn) {
+        if ($c.Name -like "ExchangeOnline_3") {
+            if ($c.State -like "Connected" -and $c.TokenStatus -like "Active") {
+                Write-Output 'An Exchange Online PowerShell session is already extablished.'
+            } else {
+                Connect-ExchangeOnline -UserPrincipalName $UserPrincipalName
+            }
+        }
+    }
+} else {
+    Connect-ExchangeOnline -UserPrincipalName $UserPrincipalName
+}
+
 
 Write-Output "Please Wait: Searching for $($Location) Mailboxes"
 
