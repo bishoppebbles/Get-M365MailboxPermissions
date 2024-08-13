@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Looks for M365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest. 
+    Looks for M365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest.  Can optionally pull mailbox folder rights as well.
 .DESCRIPTION
     To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-EXOMailbox, Get-EXOMailboxPermissions, Get-EXORecipientPermission, and Get-ADObject Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
 
@@ -44,9 +44,9 @@
 .PARAMETER UserPrincipalName
     Specify the account that you want to use to connect.
 .PARAMETER SearchBase
-    XXX
+    The distinguished name path to use for computer object searching.
 .PARAMETER Server
-    XXX
+    The server to use for the target domain
 .PARAMETER IncludeFolderRights
     Include the collection of the rights assigned to a mailbox's folders.
 .PARAMETER MailboxRightsCsv
@@ -59,26 +59,24 @@
     By default all permission types are queried except Folder Rights due to the speed.  Use this option to query a specific one: SendOnBehalfOnly, FullAccessOnly, SendAsOnly, FolderRightsOnly
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com
-
+    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.
+.EXAMPLE
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com  -SearchBase 'ou=computer,ou=location,dc=company,dc=org' -Server 'company.org'
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com -IncludeFolderRights
-
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.  It also pulls mailbox folder rights and saves it to a file named 'Beijing_Mailbox_Folder_Rights.csv (note: this is very slow).
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com -PermissionsType FolderRightsOnly
-
     Search for mailboxes with users assigned to Beijing and only write the CSV output of mailbox folder rights to a file named 'Beijing_Mailbox_Folder_Rights.csv' in the current working directory location (note: this is very slow).
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com -CsvFileName BeijingMailboxRights.csv
-
     Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'BeijingMailboxRights.csv' in the current working directory location.
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com -OutputTerminal
-
     Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.09 - Last Modified 02 August 2024
+    Version 1.10 - Last Modified 13 August 2024
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -177,7 +175,7 @@ param
 
     [Parameter(Mandatory=$true,
                ValueFromPipeline=$false,
-               HelpMessage='Enter the user principal name')]
+               HelpMessage='Enter the server domain')]
     [string]$Server,
 
     [Parameter(Mandatory=$false,
@@ -239,7 +237,7 @@ function Get-UserLocation {
 }
 
 
-<# ***BACKUP*** of old (now unused) distinguised name lookup code
+<# ***BACKUP*** of old (now unused) distinguished name lookup code
 function Get-DistinguishedName {
     Param (
         [Parameter(Mandatory)]
