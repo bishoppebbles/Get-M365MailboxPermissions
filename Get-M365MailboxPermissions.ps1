@@ -13,7 +13,7 @@
     
     Looks for any non-inherited, approved (i.e., not denied) account that has full access permissions to the given mailbox that is not named 'SELF'.  Because inherited permissions are ignored this excludes the following:
         
-        NT AUTHORITY\SYSTEM 
+        NT AUTHORITY\SYSTEM
         NT AUTHORITY\NETWORK SERVICE 
         Administrator
         Domain Admins
@@ -60,25 +60,22 @@
 .PARAMETER PermissionsType
     By default all permission types are queried except Folder Rights due to the speed.  Use this option to query a specific one: SendOnBehalfOnly, FullAccessOnly, SendAsOnly, FolderRightsOnly
 .EXAMPLE
-    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com
-    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org
+    Search for mailboxes with users assigned to Beijing in the Asia region and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.
 .EXAMPLE
-    .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com  -SearchBase 'ou=location,dc=company,dc=org' -Server company.org
-    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -IncludeFolderRights
+    Search for mailboxes with users assigned to Beijing in the Asia region and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.  It also pulls mailbox folder rights and saves it to a file named 'Beijing_Mailbox_Folder_Rights.csv (note: this is very slow).
 .EXAMPLE
-    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com -IncludeFolderRights
-    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.  It also pulls mailbox folder rights and saves it to a file named 'Beijing_Mailbox_Folder_Rights.csv (note: this is very slow).
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -PermissionsType FolderRightsOnly
+    Search for mailboxes with users assigned to Beijing in the Asia region and ONLY write the CSV output of mailbox folder rights to a file named 'Beijing_Mailbox_Folder_Rights.csv' in the current working directory location (note: this is very slow).
 .EXAMPLE
-    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com -PermissionsType FolderRightsOnly
-    Search for mailboxes with users assigned to Beijing and only write the CSV output of mailbox folder rights to a file named 'Beijing_Mailbox_Folder_Rights.csv' in the current working directory location (note: this is very slow).
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -MailboxRightsCsv BeijingMailboxRights.csv
+    Search for mailboxes with users assigned to Beijing in the Asia region and write the CSV mailbox rights output to a file named 'BeijingMailboxRights.csv' in the current working directory location.
 .EXAMPLE
-    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com -CsvFileName BeijingMailboxRights.csv
-    Search for mailboxes with users assigned to Beijing and write the CSV output to a file named 'BeijingMailboxRights.csv' in the current working directory location.
-.EXAMPLE
-    .\Get-M365MailboxPermissions.ps1 -Location Beijing -UserPrincipalName bobsmith@corp.com -OutputTerminal
-    Search for mailboxes with users assigned to Beijing and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
+    .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
+    Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.13 - Last Modified 18 October 2024
+    Version 1.14 - Last Modified 21 October 2024
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -658,13 +655,13 @@ if ($notUniqueName) {
 }
 
 # output data to a CSV unless the -OutputTerminal switch is used
+if ($IncludeFolderRights -or ($PermissionsType -like 'FolderRightsOnly')) {
+    $mailboxFolderPermissions | Export-Csv -Path "$($Location)_$($MailboxFolderRightsCsv)" -NoTypeInformation
+}
+
+# output data to a CSV unless the -OutputTerminal switch is used
 if ($OutputTerminal) {
     $mailboxPermissions
 } elseif ($PermissionsType -notlike 'FolderRightsOnly') {
     $mailboxPermissions | Export-Csv -Path "$($Location)_$($MailboxRightsCsv)" -NoTypeInformation
-}
-
-# output data to a CSV unless the -OutputTerminal switch is used
-if ($IncludeFolderRights -or ($PermissionsType -like 'FolderRightsOnly')) {
-    $mailboxFolderPermissions | Export-Csv -Path "$($Location)_$($MailboxFolderRightsCsv)" -NoTypeInformation
 }
