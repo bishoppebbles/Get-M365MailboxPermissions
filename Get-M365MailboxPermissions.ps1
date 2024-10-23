@@ -75,7 +75,7 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.14 - Last Modified 21 October 2024
+    Version 1.15 - Last Modified 22 October 2024
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -353,7 +353,6 @@ function Get-SendOnBehalfPermissions {
                 
                 # if an object is not located in the local domain query the Global Catalog (GC)
                 if ($userInfo -eq $null) {
-                    #$userInfo = Get-ADObject -Filter "Name -like `"$($owner)`"" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server $workstationDnsRoot
                     $userInfo = Get-ADObject -Filter "Name -like `"$($owner)`"" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server ":$GCPort"
                 }
 
@@ -364,7 +363,6 @@ function Get-SendOnBehalfPermissions {
 
                 # if an object is not located in the local domain query the Global Catalog (GC) using a wildcard
                 if ($userInfo -eq $null) {
-                    #$userInfo = Get-ADObject -Filter "Name -like `"$($owner)*`"" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server $workstationDnsRoot
                     $userInfo = Get-ADObject -Filter "Name -like `"$($owner)*`"" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server ":$GCPort"
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
@@ -415,16 +413,15 @@ function Get-FullAccessPermissions {
     
     foreach($owner in $fullAccess) {
 
-        # attempt to get the owner's distinguished name (DN) using it's UPN or Name
+        # attempt to get the owner's distinguished name (DN) using it's UPN or Name; or DisplayName for a group
         # do not show an account if it is listed with full access permissions to itself (unknown why this occurs in some instances)
         if($mail.UserPrincipalName -notlike $owner.User) {  
             
             try {
-                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
+                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`" -or DisplayName -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
                 
                     # if an object is not located in the local domain query the Global Catalog (GC)
-                    #$userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -Server $workstationDnsRoot
-                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`" -or DisplayName -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                 Write-Host "Distinguished Name (DN) lookup parsing error: $($owner.User) (FullAccess) -> continuing"
@@ -470,11 +467,10 @@ function Get-SendAsPermissions {
 
             try {
                 # try to find the AD object by UPN or Name
-                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.Trustee)`" -or Name -like `"$($owner.Trustee)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
+                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.Trustee)`" -or Name -like `"$($owner.Trustee)`" -or DisplayName -like `"$($owner.Trustee)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
                 
                     # try to find the AD object by UPN in the Global Catalog (GC)
-                    #$userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.Trustee)`" -or Name -like `"$($owner.Trustee)`"" -Properties msExchExtensionCustomAttribute1 -Server $workstationDnsRoot
-                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.Trustee)`" -or Name -like `"$($owner.Trustee)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.Trustee)`" -or Name -like `"$($owner.Trustee)`" -or DisplayName -like `"$($owner.Trustee)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
                 }
             } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                 Write-Host "Distinguished Name (DN) lookup parsing error: $($owner.Trustee) (SendAs) -> continuing"
