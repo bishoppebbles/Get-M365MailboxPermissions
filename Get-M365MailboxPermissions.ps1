@@ -75,7 +75,8 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.15 - Last Modified 22 October 2024
+    Version 1.16
+    Last Modified: 28 January 2025
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -528,7 +529,7 @@ if (Get-Module ActiveDirectory) {
 } else {
     try {
         Import-Module ActiveDirectory -ErrorAction Stop
-        Write-Output 'The Active Directy PowerShell module was imported.'
+        Write-Output 'The Active Directory PowerShell module was imported.'
     } catch [System.IO.FileNotFoundException] {
         Write-Output 'The Active Directory PowerShell module is unavailable.  Exiting.'
         Return
