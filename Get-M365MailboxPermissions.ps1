@@ -75,8 +75,8 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.16
-    Last Modified: 28 January 2025
+    Version 1.17
+    Last Modified: 03 April 2025
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -662,3 +662,6 @@ if ($OutputTerminal) {
 } elseif ($PermissionsType -notlike 'FolderRightsOnly') {
     $mailboxPermissions | Export-Csv -Path "$($Location)_$($MailboxRightsCsv)" -NoTypeInformation
 }
+
+Write-Output 'Disconnect Exchange Online Prompt.'
+Disconnect-ExchangeOnline
