@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Looks for M365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest.  Can optionally pull mailbox folder rights as well.
 .DESCRIPTION
@@ -75,8 +75,8 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.17
-    Last Modified: 03 April 2025
+    Version 1.18
+    Last Modified: 10 December 2025
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -531,7 +531,7 @@ if (Get-Module ActiveDirectory) {
         Import-Module ActiveDirectory -ErrorAction Stop
         Write-Output 'The Active Directory PowerShell module was imported.'
     } catch [System.IO.FileNotFoundException] {
-        Write-Output 'The Active Directory PowerShell module is unavailable.  Exiting.'
+        Write-Output 'The Active Directory PowerShell module is unavailable. Exiting.'
         Return
     }
 }
@@ -543,7 +543,7 @@ if (Get-Module exchangeonlinemanagement) {
         Import-Module exchangeonlinemanagement -ErrorAction Stop
         Write-Output 'The Exchange Online PowerShell module was imported.'
     } catch {
-        Write-Output 'The Exchange Online PowerShell module is unavailable.  Exiting.'
+        Write-Output 'The Exchange Online PowerShell module is unavailable. Exiting.'
         Return
     }
 }
@@ -555,7 +555,7 @@ $mailboxes               = New-Object System.Collections.ArrayList  # global arr
 $mailboxPermissions      = New-Object System.Collections.ArrayList  # global array to hold all mailbox rights output data
 $mailboxFolderPermissions= New-Object System.Collections.ArrayList  # global array to hold all folder permissions output data
 $workstationDnsRoot      = (Get-ADDomain).DNSRoot
-
+$connect                 = $false
 
 # Connection to Exchange Online unless a v3 session is already established
 if(($conn = Get-ConnectionInformation)) {
@@ -564,12 +564,33 @@ if(($conn = Get-ConnectionInformation)) {
             if ($c.State -like "Connected" -and $c.TokenStatus -like "Active") {
                 Write-Output 'An Exchange Online PowerShell session is already extablished.'
             } else {
-                Connect-ExchangeOnline -UserPrincipalName $UserPrincipalName
+                $connect = $true
             }
         }
     }
 } else {
-    Connect-ExchangeOnline -UserPrincipalName $UserPrincipalName
+    $connect = $true
+}
+
+# connect to exchange online if no connection exists
+if($connect) {
+    $params = @{
+        UserPrincipalName = $UserPrincipalName
+    }
+                
+    $exVer = (Get-Module exchangeonlinemanagement).Version
+
+    # if the Exchange module version is 3.7.2 or higher it seems you need to disable the 
+    # Web Account Manager (DisableWAM) to avoid an authentication issue acquiring a token.
+    if ([int]$exVer.Major -gt 3) {
+        $params['DisableWAM'] = $true
+    } elseif ([int]$exVer.Major -eq 3 -and [int]$exVer.Minor -gt 7) {
+        $params['DisableWAM'] = $true
+    } elseif ([int]$exVer.Major -eq 3 -and [int]$exVer.Minor -eq 7 -and [int]$exVer.Build -ge 2) {
+        $params['DisableWAM'] = $true
+    }
+
+    Connect-ExchangeOnline @params
 }
 
 
@@ -586,7 +607,7 @@ $users = Get-ADGroup -Filter "Name -like `"*Users_$($Region)_$($Location)`"" -Se
         Get-ADUser -Filter "SamAccountName -like `"$($_.SamAccountName)`"" -SearchBase "ou=users,$SearchBase" -Server $Server
     }
 
-$mail2 = $users | Get-EXOMailbox -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited |
+$mail2 = $users | Get-EXOMailbox -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited -ErrorAction SilentlyContinue |
     Where-Object {$_.IsMailboxEnabled -eq 'True'}
 
 
@@ -663,5 +684,5 @@ if ($OutputTerminal) {
     $mailboxPermissions | Export-Csv -Path "$($Location)_$($MailboxRightsCsv)" -NoTypeInformation
 }
 
-Write-Output 'Disconnect Exchange Online Prompt.'
-Disconnect-ExchangeOnline
+Write-Output 'Disconnect Exchange Online.'
+Disconnect-ExchangeOnline -Confirm:$false
