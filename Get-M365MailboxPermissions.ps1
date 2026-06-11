@@ -75,8 +75,8 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.18
-    Last Modified: 10 December 2025
+    Version 1.19
+    Last Modified: 11 June 2026
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -225,47 +225,24 @@ function Get-UserLocation {
         [System.Object[]]$adObject
     )
 
-    # extra the location name of the user acccount
+    #$results = $null
+
+    # extract the location name of the user acccount
     $adObject.msExchExtensionCustomAttribute1 | 
         ForEach-Object {
             if($_ -match 'iPostSite\|(.+)') {
                 $results = $Matches[1]
-            }
-                     
+            }        
         }
 
-    if ($results -ne $null -and ($results | Measure-Object).Count -gt 1) {
+ <#   if ($results -ne $null -and ($results | Measure-Object).Count -gt 1) {
         $results = $results -join '|'
         $script:notUniqueName = $true # flag to denote if an object name is not unique within AD, all results are returned
+        Write-Host 'UserLocation function'
     }
-
-    $results
-}
-
-
-<# ***BACKUP*** of old (now unused) distinguished name lookup code
-function Get-DistinguishedName {
-    Param (
-        [Parameter(Mandatory)]
-        [System.Object[]]$adObject
-    )
-
-    # capture of the DN starting from the first OU= paramater
-    $results = $adObject.DistinguishedName | 
-        ForEach-Object {
-            $_ -match ",OU=[a-zA-z ]+,DC=.+$" | Out-Null
-            $tempStr = $Matches.Values
-            $tempStr.Substring(1, $tempStr.Length - 1)
-        }
-
-    if (($results | Measure-Object).Count -gt 1) {
-        $results = $results -join '|'
-        $script:notUniqueName = $true # flag to denote if an object name is not unique within AD, all results are returned
-    }
-
-    $results
-}
 #>
+    $results
+}
 
 
 # helper function to get the name of an object
@@ -287,6 +264,37 @@ function Get-UserPrincipalName {
 }
 
 
+# attempt to locate a GUID in AD or Exchange Online to resolve to some type of friendly name
+function Resolve-GUID {
+    Param (
+        [Parameter(Mandatory)]
+        $guid
+    )
+
+    if($found = Get-ADUser -Filter "msDS-ExternalDirectoryObjectId -eq 'User_$guid'" -Properties DisplayName,msDS-ExternalDirectoryObjectId,msExchExtensionCustomAttribute1,UserPrincipalName,ObjectClass -Server $Server) {
+        [pscustomobject]@{
+            Displayname                    = $found.DisplayName
+            UserPrincipalName              = $found.UserPrincipalName
+            msExchExtensionCustomAttribute1= $found.msExchExtensionCustomAttribute1
+            ObjectClass                    = $found.ObjectClass
+        }
+    } else {
+        try {	                    
+            if($found = Get-EXORecipient -Identity $guid -Properties CustomAttribute7,ObjectClass -ErrorAction Stop) {
+                [pscustomobject]@{
+                    Displayname                    = $found.DisplayName
+                    UserPrincipalName              = $found.PrimarySmtpAddress # convert PrimarySmtpAddress to UserPrincipalName for compatibility with the Get-UserPrincipalName function
+                    msExchExtensionCustomAttribute1= $found.CustomAttribute7   # convert CustomAttribute7 to msExchExtensionCustomAttribute1 for compatibility with the Get-UserLocation function
+                    ObjectClass                    = $found.ObjectClass
+                }
+            }        
+        } catch [Microsoft.Exchange.Management.RestApiClient.RestClientException] {
+            Write-Host "GUID lookup failed: $($guid.Identity) -> continuing"
+        }
+    }
+}
+
+
 # helper function to add mailbox permission results to the global array container
 function Add-MailboxPermissionObject {
     Param (
@@ -295,20 +303,21 @@ function Add-MailboxPermissionObject {
         [Parameter(Position=1,Mandatory=$true)]
         $SecurityPrincipal,
         [Parameter(Position=2,Mandatory=$true)]
-        $OrganizationalUnit,
+        $Location,
         [Parameter(Position=3,Mandatory=$true)]
         $AccessRight
     )
 
     $mailboxPermissions.Add(
         [PSCustomObject]@{
-            'Mailbox'           = $Mailbox
-            'SecurityPrincipal' = $SecurityPrincipal
-            'OrganizationalUnit'= $OrganizationalUnit
-            'AccessRight'       = $AccessRight
+            Mailbox          = $Mailbox
+            SecurityPrincipal= $SecurityPrincipal
+            Location         = $Location
+            AccessRight      = $AccessRight
         }
     ) > $null
 }
+
 
 # helper function to add mailbox folder permissions results to the global array container
 function Add-MailboxFolderPermissionObject {
@@ -325,10 +334,10 @@ function Add-MailboxFolderPermissionObject {
 
     $mailboxFolderPermissions.Add(
         [PSCustomObject]@{
-            'Mailbox'    = $Mailbox
-            'FolderName' = $FolderName
-            'User'       = $User
-            'AccessRights'= $AccessRights -join '|'
+            Mailbox     = $Mailbox
+            FolderName  = $FolderName
+            User        = $User
+            AccessRights= $AccessRights -join '|'
         }
     ) > $null
 }
@@ -348,49 +357,87 @@ function Get-SendOnBehalfPermissions {
     
         # obtain the distinguished name and user principal name for each SendOnBehalf owner
         foreach($owner in $owners) {
-            try {
-                # object lookup in the local domain
-                $userInfo = Get-ADObject -Filter "Name -like `"$($owner)`"" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server
+            
+            # if the owner of the permissions is a GUID, attempt to resolve and obtain related details
+            if($owner -match '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
                 
-                # if an object is not located in the local domain query the Global Catalog (GC)
-                if ($userInfo -eq $null) {
-                    $userInfo = Get-ADObject -Filter "Name -like `"$($owner)`"" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server ":$GCPort"
-                }
+                # Don't perform an AD or Exchange lookup if the GUID object was previously discovered (stored in the global $guidLookupTable hashtable)
+                if($guidLookupTable.ContainsKey($owner)) {
+                    $userInfo = $guidLookupTable[$owner]
+                    Write-Host 'GUID found: Send On Behalf'
+                } else {
 
-                # if the object hasn't been located search in the local domain using a wildcard
-                if ($userInfo -eq $null) {
-                    $userInfo = Get-ADObject -Filter "Name -like `"$($owner)*`"" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server
-                }
+                    # try to lookup a GUID to resolve to a friendly name
+                    $userInfo = Resolve-GUID $owner
 
-                # if an object is not located in the local domain query the Global Catalog (GC) using a wildcard
-                if ($userInfo -eq $null) {
-                    $userInfo = Get-ADObject -Filter "Name -like `"$($owner)*`"" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                    # save the lookup details for potential later reference
+                    if($userInfo -ne $null) {
+                        $guidLookupTable[$owner] = $userInfo
+                        Write-Host 'GUID added: Send On Behalf'
+                    }
                 }
-            } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
-                Write-Host "Distinguished Name (DN) lookup parsing error: $($owner) (SendOnBehalf) -> continuing"
+            } else {
+
+                # Don't perform an AD lookup if the object was previously discovered
+                if($userLookupTable.ContainsKey($owner)) {
+                    $userInfo = $userLookupTable[$owner]
+                    Write-Host 'User found: Send On Behalf'
+                } else {
+            
+                    try {
+                        # escape any names that use single quotes in the name
+                        $escaped = $owner.Replace("'","''")
+
+                        # object lookup in the local domain
+                        $userInfo = Get-ADObject -Filter "Name -like '$($escaped)'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server
+                
+                        # if an object is not located in the local domain query the Global Catalog (GC)
+                        if ($userInfo -eq $null) {
+                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                        }
+
+                        # if the object hasn't been located search in the local domain using a wildcard
+                        if ($userInfo -eq $null) {
+                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)*'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server
+                        }
+
+                        # if an object is not located in the local domain query the Global Catalog (GC) using a wildcard
+                        if ($userInfo -eq $null) {
+                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)*'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                        }
+
+                        # store the object lookup data for potential reuse
+                        if ($userInfo -ne $null) {
+                            $userLookupTable[$owner] = $userInfo
+                            Write-Host 'User added: Send On Behalf'
+                        }
+                    } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
+                        Write-Host "Name lookup failed: $($owner) (SendOnBehalf) -> continuing"
+                    }
+                }
             }
 
-            # if an object was located get its Universal Principal Name and Distinguished Name
+            # if an object was located get its Universal Principal Name and location
             if($userInfo -ne $null) {
-                $userDN  = Get-UserLocation $userInfo
+                $location  = Get-UserLocation $userInfo
 
-                # a group will not have a UPN so use the name instead
-                if ($userInfo.ObjectClass -notlike 'group') {
+                # a group will not have a UPN (unless a GUID was resolved) so use the name instead
+                if ($userInfo.ObjectClass -notcontains 'group' -or $owner -match '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
                     $userUPN = Get-UserPrincipalName $userInfo
                 } else {
                     $userUPN = "$owner"
                 }
 
             } else {
-                $userDN  = "Cannot locate the object's User Principal Name (UPN) and Distinguished Name (DN)"
+                $location  = "Cannot locate the object's User Principal Name (UPN) and Distinguished Name (DN)"
                 $userUPN = "$owner"
             }
 
-            Add-MailboxPermissionObject -Mailbox $mail.UserPrincipalName -SecurityPrincipal $userUPN -OrganizationalUnit $userDN -AccessRight 'SendOnBehalf'
+            Add-MailboxPermissionObject -Mailbox $mail.UserPrincipalName -SecurityPrincipal $userUPN -Location $location -AccessRight 'SendOnBehalf'
 
             # reset the shared variables
             $userInfo = $null
-            $userDN   = $null
+            $location = $null
             $userName = $null
         }
     }
@@ -414,32 +461,45 @@ function Get-FullAccessPermissions {
     
     foreach($owner in $fullAccess) {
 
-        # attempt to get the owner's distinguished name (DN) using it's UPN or Name; or DisplayName for a group
+        # attempt to get the owner's object using it's UPN, DisplayName, or Name
         # do not show an account if it is listed with full access permissions to itself (unknown why this occurs in some instances)
         if($mail.UserPrincipalName -notlike $owner.User) {  
             
-            try {
-                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`" -or DisplayName -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
-                
-                    # if an object is not located in the local domain query the Global Catalog (GC)
-                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`" -or DisplayName -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
-                }
-            } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
-                Write-Host "Distinguished Name (DN) lookup parsing error: $($owner.User) (FullAccess) -> continuing"
-            }
+            # Don't perform an AD lookup if the object was previously discovered
+            if($userLookupTable.ContainsKey($owner.user)) {
+                $userInfo = $userLookupTable[$owner.user]
+                Write-Host 'User found: Full Access'
 
-            # if an object was located get its Distinguished Name
-            if($userInfo -ne $null) {
-                $userDN  = Get-UserLocation $userInfo
             } else {
-                $userDN = "Cannot locate the object's Universal Principal Name (UPN)"
+                try {
+                    if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`" -or DisplayName -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
+                
+                        # if an object is not located in the local domain query the Global Catalog (GC)
+                        $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`" -or DisplayName -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                    }
+                } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
+                    Write-Host "Name lookup failed: $($owner.User) (FullAccess) -> continuing"
+                }
+
+                # store the object lookup data for potential reuse
+                if ($userInfo -ne $null) {
+                    $userLookupTable[$owner.User] = $userInfo
+                    Write-Host 'User added: Full Access'
+                }
             }
 
-            Add-MailboxPermissionObject -Mailbox $mail.UserPrincipalName -SecurityPrincipal $owner.User -OrganizationalUnit $userDN -AccessRight 'FullAccess'
+            # if an object was located get its location
+            if($userInfo -ne $null) {
+                $location  = Get-UserLocation $userInfo
+            } else {
+                $location = "Cannot locate the object's Universal Principal Name (UPN)"
+            }
+
+            Add-MailboxPermissionObject -Mailbox $mail.UserPrincipalName -SecurityPrincipal $owner.User -Location $location -AccessRight 'FullAccess'
               
             # clear shared variables
             $userInfo = $null
-            $userDN   = $null
+            $location = $null
         }
     }
 }
@@ -461,37 +521,75 @@ function Get-SendAsPermissions {
         }
 
     foreach($owner in $recipient) {
-  
-        # try to find the trustee Distinguished Name (DN)
-        # if a SID is unresolved don't attempt to look it up in Active Directory
-        if ($owner.Trustee -notlike "S-1-5-21-*") {
+        $trustee = $owner.Trustee
 
-            try {
-                # try to find the AD object by UPN or Name
-                if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.Trustee)`" -or Name -like `"$($owner.Trustee)`" -or DisplayName -like `"$($owner.Trustee)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
+        # if the owner of the permissions is a GUID, attempt to resolve and obtain related details
+        if($trustee -match '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
                 
-                    # try to find the AD object by UPN in the Global Catalog (GC)
-                    $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.Trustee)`" -or Name -like `"$($owner.Trustee)`" -or DisplayName -like `"$($owner.Trustee)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
-                }
-            } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
-                Write-Host "Distinguished Name (DN) lookup parsing error: $($owner.Trustee) (SendAs) -> continuing"
-            }
+            # Don't perform an AD or Exchange lookup if the GUID object was previously discovered (stored in the global $guidLookupTable hashtable)
+            if($guidLookupTable.ContainsKey($trustee)) {
+                $userInfo = $guidLookupTable[$trustee]
+                Write-Host 'GUID found: Send As'
 
-            # if an object was located get its Distinguished Name
-            if($userInfo -ne $null) {
-                $userDN  = Get-UserLocation $userInfo
             } else {
-                $userDN = "Cannot locate the object's Universal Principal Name (UPN)"
+                # try to lookup a GUID to resolve to a friendly name
+                $userInfo = Resolve-GUID $trustee
+
+                # save the lookup details to potential reference later
+                if($userInfo -ne $null) {
+                    $guidLookupTable[$trustee] = $userInfo
+                    Write-Host 'GUID added: Send As'
+                }
             }
+        # if a SID is unresolved don't attempt to look it up in Active Directory
+        } elseif ($trustee -notlike "S-1-5-21-*") {
+
+            # Don't perform an AD lookup if the object was previously discovered
+            if($userLookupTable.ContainsKey($trustee)) {
+                $userInfo = $userLookupTable[$trustee]
+                Write-Host 'User found: Send As'
+            } else {
+
+                # try to find the trustee UserPincipalName (UPN), Name, or Display Name and if it that fails try in the Global Catalog (GC)
+                try {
+                    if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($trustee)`" -or Name -like `"$($trustee)`" -or DisplayName -like `"$($trustee)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
+                
+                        $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($trustee)`" -or Name -like `"$($trustee)`" -or DisplayName -like `"$($trustee)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                    }
+
+                    # store the object lookup data for potential reuse
+                    if ($userInfo -ne $null) {
+                        $userLookupTable[$trustee] = $userInfo
+                        Write-Host 'User added: Send As'
+                    }
+                } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
+                    Write-Host "Name lookup failed: $($trustee) (SendAs) -> continuing"
+                }
+            }
+        } 
+        
+        
+        if($trustee -like "S-1-5-21-*") {
+            $location = "Cannot resolve the object's Security Identifier (SID)"
         } else {
-            $userDN = "Cannot resolve the object's Security Identifier (SID)"
+            # if an object was located get its location
+            if($userInfo -ne $null) {
+                $location  = Get-UserLocation $userInfo
+
+                # for GUIDs that have been resolved replace the Trustee name with the UPN
+                if($trustee -match '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}') {
+                    $trustee = $userInfo.UserPrincipalName
+                }
+            } else {
+                $location = "Cannot locate the object's Universal Principal Name (UPN)"
+            }
         }
         
-        Add-MailboxPermissionObject -Mailbox $($mail.UserPrincipalName) -SecurityPrincipal $owner.Trustee -OrganizationalUnit $userDN -AccessRight 'SendAs'
+        Add-MailboxPermissionObject -Mailbox $($mail.UserPrincipalName) -SecurityPrincipal $trustee -Location $location -AccessRight 'SendAs'
 
         # clear shared variables
         $userInfo = $null
-        $userDN   = $null
+        $location = $null
     }
 }
 
@@ -556,6 +654,8 @@ $mailboxPermissions      = New-Object System.Collections.ArrayList  # global arr
 $mailboxFolderPermissions= New-Object System.Collections.ArrayList  # global array to hold all folder permissions output data
 $workstationDnsRoot      = (Get-ADDomain).DNSRoot
 $connect                 = $false
+$userLookupTable         = @{}                                      # dictionary to save AD user object data to reduce redundant lookups
+$guidLookupTable         = @{}                                      # dictionary to save GUIDs found in AD or Exchange to reduce redundant lookups
 
 # Connection to Exchange Online unless a v3 session is already established
 if(($conn = Get-ConnectionInformation)) {
@@ -604,10 +704,13 @@ $mail1 = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Prope
 $users = Get-ADGroup -Filter "Name -like `"*Users_$($Region)_$($Location)`"" -SearchBase "ou=groups,$SearchBase" -Server $Server |
     Get-ADGroupMember |
     ForEach-Object {
-        Get-ADUser -Filter "SamAccountName -like `"$($_.SamAccountName)`"" -SearchBase "ou=users,$SearchBase" -Server $Server
+        #Get-ADUser -Filter "SamAccountName -like `"$($_.SamAccountName)`"" -SearchBase "ou=users,$SearchBase" -Server $Server
+        Get-ADUser -Identity $_.distinguishedName -Server $Server
     }
 
-$mail2 = $users | Get-EXOMailbox -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited -ErrorAction SilentlyContinue |
+$mail2 = $users | 
+    Where-Object {$mail1.UserPrincipalName -notcontains $_.UserPrincipalName} |  # ensure there are no duplicate Exchange mailbox lookups
+    Get-EXOMailbox -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited -ErrorAction SilentlyContinue |
     Where-Object {$_.IsMailboxEnabled -eq 'True'}
 
 
@@ -620,6 +723,12 @@ foreach($mail in $mail2) {
     $mailboxes.Add($mail) | Out-Null
 }
 
+Write-Output $mailboxes.Count
+
+# ensure no duplicate mailboxes exist
+$mailboxes = [System.Collections.ArrayList]($mailboxes | Sort-Object UserPrincipalName -Unique)
+
+Write-Output $mailboxes.Count
 
 # main script loop
 foreach($mailbox in $mailboxes) {
