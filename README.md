@@ -10,7 +10,11 @@ The script queries your M365 environment for a given set of cloud mailboxes and 
 * `Get-EXOMailboxFolderPermission`
 
 ## activedirectory Module
+* `Get-ADDomain`
 * `Get-ADObject`
+* `Get-ADUser`
+* `Get-ADGroup`
+* `Get-ADGroupMember`
 
 ## Important Note
 This script searches M365 mailboxes of interest based on a custom Exchange attribute.  Your environment may be different.
