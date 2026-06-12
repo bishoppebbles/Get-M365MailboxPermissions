@@ -2,7 +2,7 @@
 .SYNOPSIS
     Looks for M365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest.  Can optionally pull mailbox folder rights as well.
 .DESCRIPTION
-    To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-EXOMailbox, Get-EXOMailboxPermissions, Get-EXORecipientPermission, and Get-ADObject Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
+    To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-EXOMailbox|Get-EXOMailboxPermissions|Get-EXORecipientPermissionGet-EXOMailboxFolderStatistics|Get-EXOMailboxFolderPermission and Get-AdDomain|Get-ADObject|Get-ADUser|Get-ADGroup|Get-ADGroupMember Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
 
     SendOnBehalf:
     
@@ -75,8 +75,8 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.19
-    Last Modified: 11 June 2026
+    Version 1.20
+    Last Modified: 12 June 2026
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -225,7 +225,7 @@ function Get-UserLocation {
         [System.Object[]]$adObject
     )
 
-    #$results = $null
+    $results = $null
 
     # extract the location name of the user acccount
     $adObject.msExchExtensionCustomAttribute1 | 
@@ -235,12 +235,10 @@ function Get-UserLocation {
             }        
         }
 
- <#   if ($results -ne $null -and ($results | Measure-Object).Count -gt 1) {
-        $results = $results -join '|'
-        $script:notUniqueName = $true # flag to denote if an object name is not unique within AD, all results are returned
-        Write-Host 'UserLocation function'
+    if($results -eq $null) {
+        $results = 'No location data'
     }
-#>
+
     $results
 }
 
@@ -329,6 +327,8 @@ function Add-MailboxFolderPermissionObject {
         [Parameter(Position=2,Mandatory=$true)]
         $User,
         [Parameter(Position=3,Mandatory=$true)]
+        $Location,
+        [Parameter(Position=4,Mandatory=$true)]
         $AccessRights
     )
 
@@ -337,6 +337,7 @@ function Add-MailboxFolderPermissionObject {
             Mailbox     = $Mailbox
             FolderName  = $FolderName
             User        = $User
+            Location    = $Location
             AccessRights= $AccessRights -join '|'
         }
     ) > $null
@@ -364,7 +365,6 @@ function Get-SendOnBehalfPermissions {
                 # Don't perform an AD or Exchange lookup if the GUID object was previously discovered (stored in the global $guidLookupTable hashtable)
                 if($guidLookupTable.ContainsKey($owner)) {
                     $userInfo = $guidLookupTable[$owner]
-                    Write-Host 'GUID found: Send On Behalf'
                 } else {
 
                     # try to lookup a GUID to resolve to a friendly name
@@ -373,7 +373,6 @@ function Get-SendOnBehalfPermissions {
                     # save the lookup details for potential later reference
                     if($userInfo -ne $null) {
                         $guidLookupTable[$owner] = $userInfo
-                        Write-Host 'GUID added: Send On Behalf'
                     }
                 }
             } else {
@@ -381,9 +380,7 @@ function Get-SendOnBehalfPermissions {
                 # Don't perform an AD lookup if the object was previously discovered
                 if($userLookupTable.ContainsKey($owner)) {
                     $userInfo = $userLookupTable[$owner]
-                    Write-Host 'User found: Send On Behalf'
                 } else {
-            
                     try {
                         # escape any names that use single quotes in the name
                         $escaped = $owner.Replace("'","''")
@@ -409,7 +406,6 @@ function Get-SendOnBehalfPermissions {
                         # store the object lookup data for potential reuse
                         if ($userInfo -ne $null) {
                             $userLookupTable[$owner] = $userInfo
-                            Write-Host 'User added: Send On Behalf'
                         }
                     } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                         Write-Host "Name lookup failed: $($owner) (SendOnBehalf) -> continuing"
@@ -429,7 +425,7 @@ function Get-SendOnBehalfPermissions {
                 }
 
             } else {
-                $location  = "Cannot locate the object's User Principal Name (UPN) and Distinguished Name (DN)"
+                $location  = "Cannot locate the object"
                 $userUPN = "$owner"
             }
 
@@ -468,14 +464,15 @@ function Get-FullAccessPermissions {
             # Don't perform an AD lookup if the object was previously discovered
             if($userLookupTable.ContainsKey($owner.user)) {
                 $userInfo = $userLookupTable[$owner.user]
-                Write-Host 'User found: Full Access'
 
             } else {
                 try {
-                    if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`" -or DisplayName -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
+                    $escaped = ($owner.User).Replace("'","''")
+
+                    if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($escaped)' -or Name -like '$($escaped)' -or DisplayName -like '$($escaped)'" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
                 
                         # if an object is not located in the local domain query the Global Catalog (GC)
-                        $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($owner.User)`" -or Name -like `"$($owner.User)`" -or DisplayName -like `"$($owner.User)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                        $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($escaped)' -or Name -like '$($escaped)' -or DisplayName -like '$($escaped)'" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
                     }
                 } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                     Write-Host "Name lookup failed: $($owner.User) (FullAccess) -> continuing"
@@ -484,7 +481,6 @@ function Get-FullAccessPermissions {
                 # store the object lookup data for potential reuse
                 if ($userInfo -ne $null) {
                     $userLookupTable[$owner.User] = $userInfo
-                    Write-Host 'User added: Full Access'
                 }
             }
 
@@ -492,7 +488,7 @@ function Get-FullAccessPermissions {
             if($userInfo -ne $null) {
                 $location  = Get-UserLocation $userInfo
             } else {
-                $location = "Cannot locate the object's Universal Principal Name (UPN)"
+                $location = "Cannot find the UPN"
             }
 
             Add-MailboxPermissionObject -Mailbox $mail.UserPrincipalName -SecurityPrincipal $owner.User -Location $location -AccessRight 'FullAccess'
@@ -529,7 +525,6 @@ function Get-SendAsPermissions {
             # Don't perform an AD or Exchange lookup if the GUID object was previously discovered (stored in the global $guidLookupTable hashtable)
             if($guidLookupTable.ContainsKey($trustee)) {
                 $userInfo = $guidLookupTable[$trustee]
-                Write-Host 'GUID found: Send As'
 
             } else {
                 # try to lookup a GUID to resolve to a friendly name
@@ -538,7 +533,6 @@ function Get-SendAsPermissions {
                 # save the lookup details to potential reference later
                 if($userInfo -ne $null) {
                     $guidLookupTable[$trustee] = $userInfo
-                    Write-Host 'GUID added: Send As'
                 }
             }
         # if a SID is unresolved don't attempt to look it up in Active Directory
@@ -547,20 +541,20 @@ function Get-SendAsPermissions {
             # Don't perform an AD lookup if the object was previously discovered
             if($userLookupTable.ContainsKey($trustee)) {
                 $userInfo = $userLookupTable[$trustee]
-                Write-Host 'User found: Send As'
             } else {
 
                 # try to find the trustee UserPincipalName (UPN), Name, or Display Name and if it that fails try in the Global Catalog (GC)
                 try {
-                    if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($trustee)`" -or Name -like `"$($trustee)`" -or DisplayName -like `"$($trustee)`"" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
+                    $escaped = $trustee.Replace("'","''")
+
+                    if (($userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($escaped)' -or Name -like '$($escaped)' -or DisplayName -like '$($escaped)'" -Properties msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server) -eq $null) {
                 
-                        $userInfo = Get-ADObject -Filter "UserPrincipalName -like `"$($trustee)`" -or Name -like `"$($trustee)`" -or DisplayName -like `"$($trustee)`"" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                        $userInfo = Get-ADObject -Filter "UserPrincipalName -like '$($escaped)' -or Name -like '$($escaped)' -or DisplayName -like '$($escaped)'" -Properties msExchExtensionCustomAttribute1 -Server ":$GCPort"
                     }
 
                     # store the object lookup data for potential reuse
                     if ($userInfo -ne $null) {
                         $userLookupTable[$trustee] = $userInfo
-                        Write-Host 'User added: Send As'
                     }
                 } catch [Microsoft.ActiveDirectory.Management.ADFilterParsingException] {
                     Write-Host "Name lookup failed: $($trustee) (SendAs) -> continuing"
@@ -581,7 +575,7 @@ function Get-SendAsPermissions {
                     $trustee = $userInfo.UserPrincipalName
                 }
             } else {
-                $location = "Cannot locate the object's Universal Principal Name (UPN)"
+                $location = "Cannot locate the recipient trustee"
             }
         }
         
@@ -608,40 +602,86 @@ function Get-FolderPermissions {
         ForEach-Object {$r.Replace($_, ':\', 1)} | 
         Get-EXOMailboxFolderPermission -ErrorAction SilentlyContinue |
         Where-Object {
-            -not (`                
-                ($_.AccessRights -eq 'None') `
-                -or ($_.User -like 'Default') `
-                -or ($_.User -like $mail.UserPrincipalName) `
-                -or ($_.User -like 'NT:S-1-5-21-*' -and $_.AccessRights -eq 'Owner')
+            -not (($_.AccessRights -eq 'None') `
+                  -or ($_.User -like 'Default') `
+                  -or ($_.User -like $mail.UserPrincipalName) `
+                  -or ($_.User -like 'NT:S-1-5-21-*' -and $_.AccessRights -eq 'Owner')
             )
         }
 
     foreach($folder in $folderPermissions) {
-        Add-MailboxFolderPermissionObject -Mailbox $mail.UserPrincipalName -FolderName $($folder.FolderName) -User $($folder.User.DisplayName) -AccessRight $($folder.AccessRights)
+        $userInfo = $null
+        
+        # Don't attempt to lookup unresolved SIDs
+        if($folder.User.DisplayName -notlike 'NT:S-1-5-21-*') {
+        
+            # Don't perform an AD lookup if the object was previously discovered
+            if($userLookupTableFolder.ContainsKey($folder.User.DisplayName)) {
+                
+                $userInfo = $userLookupTableFolder[$folder.User.DisplayName]
+            } else {
+            
+                # escape any names that use single quotes in the name
+                $escaped = ($folder.User.DisplayName).Replace("'","''")
+                $userInfo = Get-ADObject -Filter "DisplayName -eq '$escaped'" -Properties DisplayName,msExchExtensionCustomAttribute1,extensionAttribute7 -Server $Server
+
+                # store the object lookup data for potential reuse
+                if ($userInfo -ne $null) {
+                    $userLookupTableFolder[$folder.User.DisplayName] = $userInfo
+                }
+            }
+
+            if($userInfo -ne $null) {
+
+                # extract the location name of the object
+                if($userInfo.ObjectClass -eq 'group') {
+                    $obj = [PSCustomObject]@{
+                                DisplayName                    = $userInfo.DisplayName
+                                DistinguishedName              = $userInfo.DistinguishedName
+                                msExchExtensionCustomAttribute1= $userInfo.extensionAttribute7 # convert extensionAttribute7 to msExchExtensionCustomAttribute1 for compatibility with the Get-UserLocation function
+                                Name                           = $userInfo.Name
+                                ObjectClass                    = $userInfo.ObjectClass
+                    }
+
+                    $location = Get-UserLocation $obj
+                } else {
+                    $location = Get-UserLocation $userInfo
+                }                    
+            } else {
+                    # The object could not be located in the directory
+                $location = 'AD lookup failed'
+            } 
+    
+        } else {
+            # Return no location data for an orphaned SID
+            $location = ''
+        }
+
+        Add-MailboxFolderPermissionObject -Mailbox $mail.UserPrincipalName -FolderName $($folder.FolderName) -User $($folder.User.DisplayName) -Location $location -AccessRight $($folder.AccessRights)
     }
 }
 
 # Confirm the required PowerShell modules are available or installed.
 if (Get-Module ActiveDirectory) {
-    Write-Output 'The Active Directy PowerShell module is installed.'
+    Write-Host 'The Active Directy PowerShell module is installed.'
 } else {
     try {
         Import-Module ActiveDirectory -ErrorAction Stop
-        Write-Output 'The Active Directory PowerShell module was imported.'
+        Write-Host 'The Active Directory PowerShell module was imported.'
     } catch [System.IO.FileNotFoundException] {
-        Write-Output 'The Active Directory PowerShell module is unavailable. Exiting.'
+        Write-Host 'The Active Directory PowerShell module is unavailable. Exiting.'
         Return
     }
 }
 
 if (Get-Module exchangeonlinemanagement) {
-    Write-Output 'The Exchange Online PowerShell module is installed.'
+    Write-Host 'The Exchange Online PowerShell module is installed.'
 } else {
     try {
         Import-Module exchangeonlinemanagement -ErrorAction Stop
-        Write-Output 'The Exchange Online PowerShell module was imported.'
+        Write-Host 'The Exchange Online PowerShell module was imported.'
     } catch {
-        Write-Output 'The Exchange Online PowerShell module is unavailable. Exiting.'
+        Write-Host 'The Exchange Online PowerShell module is unavailable. Exiting.'
         Return
     }
 }
@@ -656,13 +696,14 @@ $workstationDnsRoot      = (Get-ADDomain).DNSRoot
 $connect                 = $false
 $userLookupTable         = @{}                                      # dictionary to save AD user object data to reduce redundant lookups
 $guidLookupTable         = @{}                                      # dictionary to save GUIDs found in AD or Exchange to reduce redundant lookups
+$userLookupTableFolder   = @{}                                      # dictionary to save AD user object data to reduce mailbox folder redundant lookups
 
 # Connection to Exchange Online unless a v3 session is already established
 if(($conn = Get-ConnectionInformation)) {
     foreach($c in $conn) {
         if ($c.Name -like "ExchangeOnline_3") {
             if ($c.State -like "Connected" -and $c.TokenStatus -like "Active") {
-                Write-Output 'An Exchange Online PowerShell session is already extablished.'
+                Write-Host 'An Exchange Online PowerShell session is already extablished.'
             } else {
                 $connect = $true
             }
@@ -694,7 +735,7 @@ if($connect) {
 }
 
 
-Write-Output "Please Wait: Searching for $($Location) Mailboxes"
+Write-Host "Please Wait: Searching for $($Location) Mailboxes"
 
 # get M365 mailbox accounts that have not migrated domains
 $mail1 = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited |
@@ -703,10 +744,7 @@ $mail1 = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Prope
 # get M365 mailbox accounts that have migrated domains
 $users = Get-ADGroup -Filter "Name -like `"*Users_$($Region)_$($Location)`"" -SearchBase "ou=groups,$SearchBase" -Server $Server |
     Get-ADGroupMember |
-    ForEach-Object {
-        #Get-ADUser -Filter "SamAccountName -like `"$($_.SamAccountName)`"" -SearchBase "ou=users,$SearchBase" -Server $Server
-        Get-ADUser -Identity $_.distinguishedName -Server $Server
-    }
+    Get-ADUser  -Server $Server
 
 $mail2 = $users | 
     Where-Object {$mail1.UserPrincipalName -notcontains $_.UserPrincipalName} |  # ensure there are no duplicate Exchange mailbox lookups
@@ -723,18 +761,12 @@ foreach($mail in $mail2) {
     $mailboxes.Add($mail) | Out-Null
 }
 
-Write-Output $mailboxes.Count
-
-# ensure no duplicate mailboxes exist
-$mailboxes = [System.Collections.ArrayList]($mailboxes | Sort-Object UserPrincipalName -Unique)
-
-Write-Output $mailboxes.Count
 
 # main script loop
 foreach($mailbox in $mailboxes) {
 
     $activity        = "Get-M365MailboxPermissions for $($Location) ($($counter) of $($mailboxes.Count) mailboxes)"
-    $currentStatus   = "Getting permissions for $($mailbox.DisplayName)"
+    $currentStatus   = "Getting mailbox permissions for $($mailbox.DisplayName)"
     $percentComplete = [int](($counter/$mailboxes.Count)*100)
     
     if ($PermissionsType -like 'SendOnBehalfOnly') {
@@ -754,6 +786,7 @@ foreach($mailbox in $mailboxes) {
     
     } elseif ($PermissionsType -like 'FolderRightsOnly') {
         
+        $currentStatus   = "Getting mailbox folder permissions for $($mailbox.DisplayName)"
         Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "Folder Rights"
         Get-FolderPermissions $mailbox
     
@@ -769,6 +802,7 @@ foreach($mailbox in $mailboxes) {
         Get-SendAsPermissions $mailbox
 
         if ($IncludeFolderRights) {
+            $currentStatus   = "Getting mailbox folder permissions for $($mailbox.DisplayName)"
             Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "Folder Rights"
             Get-FolderPermissions $mailbox
         }
@@ -793,5 +827,5 @@ if ($OutputTerminal) {
     $mailboxPermissions | Export-Csv -Path "$($Location)_$($MailboxRightsCsv)" -NoTypeInformation
 }
 
-Write-Output 'Disconnect Exchange Online.'
+Write-Host 'Disconnect Exchange Online.'
 Disconnect-ExchangeOnline -Confirm:$false
