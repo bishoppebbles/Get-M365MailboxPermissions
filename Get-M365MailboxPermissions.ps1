@@ -1,17 +1,16 @@
 <#
 .SYNOPSIS
-    Looks for M365 mailboxes based on a location name and returns SendOnBehalf, FullAccess, and SendAs permissions for the mailboxes of interest.  Can optionally pull mailbox folder rights as well.
+    Looks for M365 mailboxes based on a location name and returns SendOnBehalfTo, FullAccess, DeleteItem, ReadPermission, ChangePermission, ChangeOwner, ExternalAccount, and SendAs permissions for the mailboxes of interest.  Can optionally pull mailbox folder rights for folders: Calendar, Contacts, DeletedItems, Drafts, Inbox, and SentItems.
 .DESCRIPTION
     To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-EXOMailbox|Get-EXOMailboxPermissions|Get-EXORecipientPermissionGet-EXOMailboxFolderStatistics|Get-EXOMailboxFolderPermission and Get-AdDomain|Get-ADObject|Get-ADUser|Get-ADGroup|Get-ADGroupMember Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
 
     SendOnBehalf:
     
     Checks all mailboxes that have user accounts listed under this property.  If there are multiple it displays each account and queries the distinguished name (DN) and universal principal name (UPN) for that account.  In instances where an account has a non-unique name this query will return multiple values and display all of them.  It is up to the analyst to further determine which one(s) are accurate.
+        
+    Mailbox permissions:
     
-    
-    FullAccess (open the mailbox, access its contents, but can't send mail):
-    
-    Looks for any non-inherited, approved (i.e., not denied) account that has full access permissions to the given mailbox that is not named 'SELF'.  Because inherited permissions are ignored this excludes the following:
+    Looks for any non-inherited, approved (i.e., not denied) account that has various mailbox permissions to the given mailbox that is not named 'SELF'.  Because inherited permissions are ignored this excludes the following:
         
         NT AUTHORITY\SYSTEM
         NT AUTHORITY\NETWORK SERVICE 
@@ -24,7 +23,7 @@
         Managed Availability Servers
         Public Folder Management
     
-    It also pulls the full distinguished name (DN) for each account as a reference (for both user and group Active Directory objects), primarily to identify accounts outside of the local organizational unit (OU).  In some instances the mailbox owner is returned as a result with having full access permissions to their own mailbox.  If this occurs the script does not include that result to provide for easier analysis.
+    It also pulls the location for each account as a reference (for both user and group Active Directory objects), primarily to identify accounts outside of the target location.  In some instances the mailbox owner is returned as a result with having full access permissions to their own mailbox.  If this occurs the script does not include that result to provide for easier analysis.
 
     
     SendAs (the security principal can send messages that appear as if they are the mailbox owner (i.e., they impersonate them)):
@@ -34,7 +33,7 @@
     
     Mailbox Folder Rights:
     
-    Gets a mailbox's statistics to build a list of its folder paths and then pulls each folder's permissions.  Rights are excluded under the following circumstances:
+    Gets a mailbox's statistics to build a list of its folder paths: Calendar, Contacts, DeletedItems, Drafts, Inbox, SentItems, and user created folders, then query the folder's permissions.  Rights are excluded under the following circumstances:
         A right's user is the same as the mailbox's User Principal Name.
         If a user is 'Default.'
         If a user is assigned an access right of 'none.'
@@ -75,8 +74,8 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.20
-    Last Modified: 12 June 2026
+    Version 1.21
+    Last Modified: 15 June 2026
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -87,6 +86,9 @@
     User
     - The security principal (user, security group, Exchange management role group, etc.) that has permission to the mailbox
     
+    Location
+    - The location of the security principal object with the given mailbox permission
+
     AccessRights
     - The permission that the security principal has on the mailbox
       * ChangeOwner     : change the owner of the mailbox
@@ -440,8 +442,8 @@ function Get-SendOnBehalfPermissions {
 }
 
 
-# show accounts with full access permissions to accounts other than their own
-function Get-FullAccessPermissions {
+# updated to show accounts with FullAccess, DeleteItem, ReadPermission, ChangePermission, ChangeOwner, and ExternalAccount rights to accounts other than their own
+function Get-MailboxPermissions {
     param (
         [Parameter(Mandatory)]
         $mail
@@ -451,7 +453,7 @@ function Get-FullAccessPermissions {
         Where-Object {
             $_.Deny -eq $false -and 
             $_.IsInherited -eq $false -and
-            $_.AccessRights -like "*FullAccess*" -and
+            #$_.AccessRights -like "*FullAccess*" -and
             $_.User -notlike 'NT AUTHORITY\SELF'
         }
     
@@ -491,7 +493,10 @@ function Get-FullAccessPermissions {
                 $location = "Cannot find the UPN"
             }
 
-            Add-MailboxPermissionObject -Mailbox $mail.UserPrincipalName -SecurityPrincipal $owner.User -Location $location -AccessRight 'FullAccess'
+            # Display all access rights if more than one
+            foreach($right in $owner.AccessRights) {
+                Add-MailboxPermissionObject -Mailbox $mail.UserPrincipalName -SecurityPrincipal $owner.User -Location $location -AccessRight $right
+            }
               
             # clear shared variables
             $userInfo = $null
@@ -588,7 +593,7 @@ function Get-SendAsPermissions {
 }
 
 
-# Get folder permissions for the given mailbox
+# Get folder permissions for folders: Calendar, Contacs, DeletedItems, Drafts, Inbox, SentItems, and user created folders for the given mailbox
 function Get-FolderPermissions {
     param (
         [Parameter(Mandatory)]
@@ -598,7 +603,8 @@ function Get-FolderPermissions {
     # regex to help format a mailbox's folder path correctly as input to the Get-EXOMailboxFolderPermissions cmdlet
     $r = [regex]'\\'
     
-    $folderPermissions = (Get-EXOMailboxFolderStatistics $mail.UserPrincipalName).Identity | 
+    $folderPermissions = (Get-EXOMailboxFolderStatistics $mail.UserPrincipalName | 
+            Where-Object {$_.FolderType -in 'Calendar','Contacts','DeletedItems','Drafts','Inbox','SentItems', "User Created"}).Identity | 
         ForEach-Object {$r.Replace($_, ':\', 1)} | 
         Get-EXOMailboxFolderPermission -ErrorAction SilentlyContinue |
         Where-Object {
@@ -738,7 +744,7 @@ if($connect) {
 Write-Host "Please Wait: Searching for $($Location) Mailboxes"
 
 # get M365 mailbox accounts that have not migrated domains
-$mail1 = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited |
+$mail1 = Get-EXOMailbox -Filter "CustomAttribute7 -like '*$($Location)*'" -Properties GrantSendOnBehalfTo,IsMailboxEnabled -PropertySets Minimum -ResultSize Unlimited |
     Where-Object {$_.IsMailboxEnabled -eq 'True'}
 
 # get M365 mailbox accounts that have migrated domains
@@ -748,7 +754,7 @@ $users = Get-ADGroup -Filter "Name -like `"*Users_$($Region)_$($Location)`"" -Se
 
 $mail2 = $users | 
     Where-Object {$mail1.UserPrincipalName -notcontains $_.UserPrincipalName} |  # ensure there are no duplicate Exchange mailbox lookups
-    Get-EXOMailbox -Properties GrantSendOnBehalfTo,IsMailboxEnabled -ResultSize Unlimited -ErrorAction SilentlyContinue |
+    Get-EXOMailbox -Properties GrantSendOnBehalfTo,IsMailboxEnabled -PropertySets Minimum -ResultSize Unlimited -ErrorAction SilentlyContinue |
     Where-Object {$_.IsMailboxEnabled -eq 'True'}
 
 
@@ -767,21 +773,21 @@ foreach($mailbox in $mailboxes) {
 
     $activity        = "Get-M365MailboxPermissions for $($Location) ($($counter) of $($mailboxes.Count) mailboxes)"
     $currentStatus   = "Getting mailbox permissions for $($mailbox.DisplayName)"
-    $percentComplete = [int](($counter/$mailboxes.Count)*100)
+    $percentComplete = [int](($counter/$mailboxes.Count) * 100)
     
     if ($PermissionsType -like 'SendOnBehalfOnly') {
     
-        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendOnBehalf Permission"
+        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendOnBehalf Right"
         Get-SendOnBehalfPermissions $mailbox
     
     } elseif ($PermissionsType -like 'FullAccessOnly') {
     
-        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "FullAccess Permission"
-        Get-FullAccessPermissions $mailbox
+        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "Mailbox Permissions"
+        Get-MailboxPermissions $mailbox
     
     } elseif ($PermissionsType -like 'SendAsOnly') {
         
-        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendAs Permission"
+        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendAs Right"
         Get-SendAsPermissions $mailbox
     
     } elseif ($PermissionsType -like 'FolderRightsOnly') {
@@ -792,13 +798,13 @@ foreach($mailbox in $mailboxes) {
     
     } else {
     
-        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendOnBehalf Permission"
+        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendOnBehalf Right"
         Get-SendOnBehalfPermissions $mailbox
     
-        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "FullAccess Permission"
-        Get-FullAccessPermissions $mailbox
+        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "Mailbox Permissions"
+        Get-MailboxPermissions $mailbox
     
-        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendAs Permission"
+        Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendAs Right"
         Get-SendAsPermissions $mailbox
 
         if ($IncludeFolderRights) {
