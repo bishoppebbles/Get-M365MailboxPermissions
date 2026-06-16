@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Looks for M365 mailboxes based on a location name and returns SendOnBehalfTo, FullAccess, DeleteItem, ReadPermission, ChangePermission, ChangeOwner, ExternalAccount, and SendAs permissions for the mailboxes of interest.  Can optionally pull mailbox folder rights for folders: Calendar, Contacts, DeletedItems, Drafts, Inbox, SentItems, and user created folders.
+    Looks for M365 mailboxes based on a location name and returns SendOnBehalfTo, FullAccess, DeleteItem, ReadPermission, ChangePermission, ChangeOwner, ExternalAccount, and SendAs permissions for the mailboxes of interest.  Can optionally pull mailbox folder rights for folders: Calendar, Contacts, DeletedItems, Drafts, Inbox, and SentItems, and user created folders.
 .DESCRIPTION
     To run this script your organization must assigned the appropriate M365 permissions/roles to execute the Get-EXOMailbox|Get-EXOMailboxPermissions|Get-EXORecipientPermissionGet-EXOMailboxFolderStatistics|Get-EXOMailboxFolderPermission and Get-AdDomain|Get-ADObject|Get-ADUser|Get-ADGroup|Get-ADGroupMember Exchange Online PowerShell and Active Directory cmdlets.  For large mailbox queries (appox. 500+) it's recommended to start a new remote session as it's possible your session will expire during the data pull.  It is also recommended to run this on a system in the domain where the majority of mailboxes of interest reside.  Otherwise a large number of queries to the Global Catalog (GC) will be performed and hinder performance.
 
@@ -74,7 +74,7 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.22
+    Version 1.23
     Last Modified: 15 June 2026
     Author: Sam Pursglove
 
@@ -603,7 +603,7 @@ function Get-FolderPermissions {
     # regex to help format a mailbox's folder path correctly as input to the Get-EXOMailboxFolderPermissions cmdlet
     $r = [regex]'\\'
     
-    $folderPermissions = (Get-EXOMailboxFolderStatistics $mail.UserPrincipalName | 
+    $folderPermissions = ($mail | Get-EXOMailboxFolderStatistics | 
             Where-Object {$_.FolderType -in 'Calendar','Contacts','DeletedItems','Drafts','Inbox','SentItems', "User Created"}).Identity | 
         ForEach-Object {$r.Replace($_, ':\', 1)} | 
         Get-EXOMailboxFolderPermission -ErrorAction SilentlyContinue |
@@ -834,4 +834,4 @@ if ($OutputTerminal) {
 }
 
 Write-Host 'Disconnect Exchange Online.'
-Disconnect-ExchangeOnline -Confirm:$false
+#Disconnect-ExchangeOnline -Confirm:$false
