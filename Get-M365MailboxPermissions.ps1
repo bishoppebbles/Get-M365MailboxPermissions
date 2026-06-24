@@ -57,7 +57,7 @@
 .PARAMETER OutputTerminal
     Display the results to the PowerShell terminal instead of writing them to a CSV file.  This output is a custom object so alternatively it can be pipled to other PowerShell commands for additional processing.
 .PARAMETER PermissionsType
-    By default all permission types are queried except Folder Rights due to the speed.  Use this option to query a specific one: SendOnBehalfOnly, FullAccessOnly, SendAsOnly, FolderRightsOnly
+    By default all permission types are queried except Folder Rights due to the speed.  Use this option to query a specific one: SendOnBehalfOnly, MailboxPermissionsOnly, SendAsOnly, FolderRightsOnly
 .EXAMPLE
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org
     Search for mailboxes with users assigned to Beijing in the Asia region and write the CSV output to a file named 'Beijing_Mailbox_Rights.csv' in the current working directory location.
@@ -74,8 +74,8 @@
     .\Get-M365MailboxPermissions.ps1 -Location Beijing -Region Asia -UserPrincipalName bobsmith@corp.com -SearchBase 'ou=location,dc=company,dc=org' -Server company.org -OutputTerminal
     Search for mailboxes with users assigned to Beijing in the Asia region and display the results in the PowerShell terminal. This output could alternatively be piped to other PowerShell commands.
 .NOTES
-    Version 1.24
-    Last Modified: 16 June 2026
+    Version 1.25
+    Last Modified: 24 June 2026
     Author: Sam Pursglove
 
     From Get-MailboxPermission help at https://docs.microsoft.com/en-us/powershell/module/exchange/mailboxes/get-mailboxpermission?view=exchange-ps
@@ -212,8 +212,8 @@ param
 
     [Parameter(Mandatory=$false,
                ValueFromPipeline=$false,  
-               HelpMessage='Query a single permission type: SendOnBehalf, FullAccess, SendAs, or FolderRights (default: all permissions types except FolderRights)')]
-    [ValidateSet('SendOnBehalfOnly','FullAccessOnly','SendAsOnly','FolderRightsOnly')][string]$PermissionsType
+               HelpMessage='Query a single permission type: SendOnBehalf, Mailbox Permissions, SendAs, or FolderRights (default: all permissions types except FolderRights)')]
+    [ValidateSet('SendOnBehalfOnly','MailboxPermissionsOnly','SendAsOnly','FolderRightsOnly')][string]$PermissionsType
 )
 
 Set-StrictMode -Version 3
@@ -388,21 +388,21 @@ function Get-SendOnBehalfPermissions {
                         $escaped = $owner.Replace("'","''")
 
                         # object lookup in the local domain
-                        $userInfo = Get-ADObject -Filter "Name -like '$($escaped)'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server
+                        $userInfo = Get-ADObject -Filter "Name -like '$($escaped)' -or DisplayName -like '$($escaped)'" -Properties userPrincipalName,msExchExtensionCustomAttribute1,DisplayName -SearchBase $SearchBase -Server $Server
                 
                         # if an object is not located in the local domain query the Global Catalog (GC)
                         if ($userInfo -eq $null) {
-                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)' -or DisplayName -like '$($escaped)'" -Properties userPrincipalName,msExchExtensionCustomAttribute1,DisplayName -Server ":$GCPort"
                         }
 
                         # if the object hasn't been located search in the local domain using a wildcard
                         if ($userInfo -eq $null) {
-                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)*'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -SearchBase $SearchBase -Server $Server
+                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)*' -or DisplayName -like '$($escaped)*'" -Properties userPrincipalName,msExchExtensionCustomAttribute1,DisplayName -SearchBase $SearchBase -Server $Server
                         }
 
                         # if an object is not located in the local domain query the Global Catalog (GC) using a wildcard
                         if ($userInfo -eq $null) {
-                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)*'" -Properties userPrincipalName,msExchExtensionCustomAttribute1 -Server ":$GCPort"
+                            $userInfo = Get-ADObject -Filter "Name -like '$($escaped)*' -or DisplayName -like '$($escaped)*'" -Properties userPrincipalName,msExchExtensionCustomAttribute1,DisplayName -Server ":$GCPort"
                         }
 
                         # store the object lookup data for potential reuse
@@ -436,7 +436,6 @@ function Get-SendOnBehalfPermissions {
             # reset the shared variables
             $userInfo = $null
             $location = $null
-            $userName = $null
         }
     }
 }
@@ -780,7 +779,7 @@ foreach($mailbox in $mailboxes) {
         Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "SendOnBehalf Right"
         Get-SendOnBehalfPermissions $mailbox
     
-    } elseif ($PermissionsType -like 'FullAccessOnly') {
+    } elseif ($PermissionsType -like 'MailboxPermissionsOnly') {
     
         Write-Progress -Activity $activity -Status $currentStatus -PercentComplete $percentComplete -CurrentOperation "Mailbox Permissions"
         Get-MailboxPermissions $mailbox
